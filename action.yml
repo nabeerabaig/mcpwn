@@ -1,0 +1,53 @@
+name: "mcp-injection-scanner"
+description: "Scan agent config files and MCP tool definitions for prompt injection; fail on drift or critical findings."
+inputs:
+  mode:
+    description: "repo | scan | drift"
+    default: "repo"
+  fail-on:
+    description: "none | info | warning | critical"
+    default: "critical"
+  baseline:
+    description: "Pinned baseline path (drift mode)"
+    default: ".mcp-scan/baseline.json"
+  tools-json:
+    description: "Saved tools/list JSON files to scan without launching servers (scan/drift modes), space separated"
+    default: ""
+  changed-since:
+    description: "Git ref; in repo mode only scan agent files changed since it (use the PR base sha)"
+    default: ""
+  sarif-output:
+    description: "Where to write SARIF"
+    default: "mcpscan.sarif"
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Run mcpscan
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        BASELINE: ${{ inputs.baseline }}
+        TOOLS_JSON: ${{ inputs.tools-json }}
+        CHANGED_SINCE: ${{ inputs.changed-since }}
+        SARIF: ${{ inputs.sarif-output }}
+      run: |
+        set -uo pipefail
+        RUN="${{ github.action_path }}/scanner/run.py"
+        extra=()
+        [ -n "$TOOLS_JSON" ] && extra+=(--tools-json $TOOLS_JSON)
+        case "$MODE" in
+          repo)
+            [ -n "$CHANGED_SINCE" ] && extra+=(--changed-since "$CHANGED_SINCE")
+            python3 "$RUN" repo . --format sarif --output "$SARIF" "${extra[@]}" || true
+            python3 "$RUN" repo . --fail-on "$FAIL_ON" "${extra[@]}" ;;
+          scan)
+            python3 "$RUN" scan --format sarif --output "$SARIF" "${extra[@]}" || true
+            python3 "$RUN" scan --fail-on "$FAIL_ON" "${extra[@]}" ;;
+          drift)
+            python3 "$RUN" drift --baseline "$BASELINE" --fail-on "$FAIL_ON" "${extra[@]}" ;;
+          *) echo "unknown mode $MODE"; exit 2 ;;
+        esac

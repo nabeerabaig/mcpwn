@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scanner/run.py\" repo . --format hook --min-confidence 0.5",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

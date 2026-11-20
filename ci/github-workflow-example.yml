@@ -1,0 +1,43 @@
+# Example only: copy to .github/workflows/ in a repo YOU choose. Nothing here is installed or pushed for you.
+name: agent-security
+on:
+  pull_request:
+    paths:
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - ".cursorrules"
+      - ".windsurfrules"
+      - ".cursor/**"
+      - ".github/copilot-instructions.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/PULL_REQUEST_TEMPLATE*"
+      - ".mcp.json"
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # Replace ./ with owner/repo@ref once the plugin lives in its own repo.
+      - uses: ./
+        with:
+          mode: repo
+          fail-on: critical
+          changed-since: ${{ github.event.pull_request.base.sha }}
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: mcpscan.sarif }
+  drift:
+    # Requires a committed baseline and a saved tools/list snapshot so no server is launched in CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          mode: drift
+          baseline: .mcp-scan/baseline.json
+          tools-json: .mcp-scan/current-tools.json
+          fail-on: warning

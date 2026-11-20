@@ -1,0 +1,8 @@
+{
+  "name": "mcp-injection-scanner",
+  "version": "0.2.0",
+  "description": "Scans MCP servers, agent config files and tool definitions for prompt injection using tiered, confidence-scored detection. Includes cross-server exploit chain analysis and rug-pull (drift) detection.",
+  "author": { "name": "mcp-injection-scanner" },
+  "license": "MIT",
+  "keywords": ["mcp", "security", "prompt-injection", "scanner"]
+}
