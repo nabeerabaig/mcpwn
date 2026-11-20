@@ -1,0 +1,277 @@
+{
+  "memory": {
+    "tools": [
+      {
+        "name": "create_entities",
+        "description": "Add new items to the graph. Existing names are skipped.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "entityType": {
+                    "type": "string"
+                  },
+                  "observations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "entityType",
+                  "observations"
+                ]
+              }
+            }
+          },
+          "required": [
+            "entities"
+          ]
+        }
+      },
+      {
+        "name": "create_relations",
+        "description": "Link existing entities. Both endpoints must exist.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "relations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "relationType": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to",
+                  "relationType"
+                ]
+              }
+            }
+          },
+          "required": [
+            "relations"
+          ]
+        }
+      },
+      {
+        "name": "add_observations",
+        "description": "Attach additional facts to existing entities.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "observations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entityName": {
+                    "type": "string"
+                  },
+                  "contents": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "entityName",
+                  "contents"
+                ]
+              }
+            }
+          },
+          "required": [
+            "observations"
+          ]
+        }
+      },
+      {
+        "name": "delete_entities",
+        "description": "Remove the selected entities and their incident links.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "entityNames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "entityNames"
+          ]
+        }
+      },
+      {
+        "name": "delete_observations",
+        "description": "Remove selected facts while retaining the entities.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "deletions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entityName": {
+                    "type": "string"
+                  },
+                  "observations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "entityName",
+                  "observations"
+                ]
+              }
+            }
+          },
+          "required": [
+            "deletions"
+          ]
+        }
+      },
+      {
+        "name": "delete_relations",
+        "description": "Remove exact matching links without deleting nodes. If unsure about the relation type, call open_nodes first.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "relations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "relationType": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to",
+                  "relationType"
+                ]
+              }
+            }
+          },
+          "required": [
+            "relations"
+          ]
+        }
+      },
+      {
+        "name": "read_graph",
+        "description": "Return graph contents, optionally filtered by entity type.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "entityTypes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "observationLimit": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      {
+        "name": "search_nodes",
+        "description": "Find nodes whose names, types, or facts match a query.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "maxLength": 2048
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "observationLimit": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "open_nodes",
+        "description": "Retrieve named entities and relationships between them.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "observationLimit": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "names"
+          ]
+        }
+      }
+    ]
+  },
+  "time": {
+    "tools": [
+      {
+        "name": "get_current_time",
+        "description": "Report the current time for the selected IANA timezone. If omitted, use the server timezone.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

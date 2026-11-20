@@ -71,6 +71,8 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 
 See the [offline benign-tool pilot](bench/benign_pilot.md) for a separate five-tool smoke test and reproducible CLI command.
 
+The [public MCP tool evaluation](bench/benign_public.md) adds ten doc-derived benign fixtures from two public reference servers.
+
 ## Other features
 
 - **Streamable HTTP** MCP servers (JSON and SSE replies) are scanned; legacy SSE transport is not.
