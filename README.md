@@ -74,4 +74,4 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 - **Streamable HTTP** MCP servers (JSON and SSE replies) are scanned; legacy SSE transport is not.
 - **Egress monitoring** (`proxy --egress --allow-host H --block-egress`): the server's HTTP(S) goes through a local logging proxy that flags non-allowlisted hosts and credential-shaped data (AWS/GitHub/Slack/JWT/private keys). HTTPS is a CONNECT tunnel, so only the host is visible, not the body. Only programs that honor `HTTP(S)_PROXY` are seen; use a container with no network for hard enforcement. The stdio proxy also scans `tools/call` arguments and results for credentials, unlisted URLs, and instructions in tool results.
 - **PR mode**: `repo --changed-since <base-sha> --format markdown` scans only changed agent files and emits a review-comment table.
-- **CI**: `action.yml` (composite action) and `ci/github-workflow-example.yml`. These are files only; nothing is installed or pushed anywhere.
+- **CI**: `action.yml` (composite action) and `ci/github-workflow-example.yml`. These are files only; nothing is installed or pushed anywhere else.
