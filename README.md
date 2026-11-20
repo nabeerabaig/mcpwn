@@ -73,6 +73,8 @@ See the [offline benign-tool pilot](bench/benign_pilot.md) for a separate five-t
 
 The [public MCP tool evaluation](bench/benign_public.md) adds ten doc-derived benign fixtures from two public reference servers.
 
+Run the offline false-positive regression check with `python3 bench/evaluate_benign.py --max-flagged 0`. Add `--json` for per-tool results, or pass paths to your own known-benign `--tools-json` snapshots. GitHub Actions runs the bundled check on pushes and pull requests.
+
 ## Other features
 
 - **Streamable HTTP** MCP servers (JSON and SSE replies) are scanned; legacy SSE transport is not.
