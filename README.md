@@ -69,6 +69,8 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 
 **Read this carefully:** this is *not* the AppSecSanta/Cisco audit set, which I did not have, so the "<10% FP vs 78%" comparison has not been made. The detectors were also iterated while looking at this corpus, so the numbers are optimistic. Treat them as a regression baseline, not evidence of real-world accuracy. No real LLM was run for Tier 3 or dynamic mode; dynamic mode is tested only with a deterministic mock agent.
 
+See the [offline benign-tool pilot](bench/benign_pilot.md) for a separate five-tool smoke test and reproducible CLI command.
+
 ## Other features
 
 - **Streamable HTTP** MCP servers (JSON and SSE replies) are scanned; legacy SSE transport is not.

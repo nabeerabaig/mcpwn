@@ -1,0 +1,81 @@
+{
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Call select_region first to choose the forecast region.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_reports",
+      "description": "List reports using the optional pagination token.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Opaque pagination token from the previous page."
+          }
+        }
+      }
+    },
+    {
+      "name": "lookup_help",
+      "description": "Look up documentation for a command. This tool does not run commands.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "list",
+              "status",
+              "help"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "export_preview",
+      "description": "Preview export settings without sending or saving a report.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "options": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "csv",
+                  "json"
+                ],
+                "default": "csv"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "check_connection",
+      "description": "Check whether a saved connection is available. The response does not contain credentials.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "connection_name": {
+            "type": "string",
+            "default": "default"
+          }
+        }
+      }
+    }
+  ]
+}
