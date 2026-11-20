@@ -2,7 +2,7 @@
 
 A plugin that scans MCP servers and agent instruction files for prompt injection, with a confidence score per finding instead of a binary flag. Pure Python standard library.
 
-Status: **v0.2.0, local only, not published.**
+Status: **v0.2.0.**
 
 ## Install locally
 
