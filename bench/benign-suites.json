@@ -32,6 +32,45 @@
         "warning": 0,
         "critical": 0
       }
+    },
+    {
+      "id": "upstream-sea-lite",
+      "kind": "upstream-snapshot",
+      "fixture": "upstream/catalog-snap/sea-lite.json",
+      "source": "https://github.com/rafe-walker/mcp-catalog-snap/blob/87b5a06bcf150e545dd06a9f347125ad09da0c66/examples/.mcp-catalog/sea-lite.json",
+      "format": "mcp-catalog-snap/1",
+      "sha256": "a74b3212675a0f29dd50305040a2852e09fd3d6cb1ecbb5dd773487caf8baf77",
+      "max_flagged": {
+        "info": 0,
+        "warning": 0,
+        "critical": 0
+      }
+    },
+    {
+      "id": "upstream-kronicle-lite",
+      "kind": "upstream-snapshot",
+      "fixture": "upstream/catalog-snap/kronicle-lite.json",
+      "source": "https://github.com/rafe-walker/mcp-catalog-snap/blob/87b5a06bcf150e545dd06a9f347125ad09da0c66/examples/.mcp-catalog/kronicle-lite.json",
+      "format": "mcp-catalog-snap/1",
+      "sha256": "26daca572046f3abaff8443e36fab902e8934d1da73350aea6fe18a66e819116",
+      "max_flagged": {
+        "info": 0,
+        "warning": 0,
+        "critical": 0
+      }
+    },
+    {
+      "id": "upstream-github-sweep",
+      "kind": "upstream-snapshot",
+      "fixture": "upstream/catalog-snap/github-mcp-server-2.1.0.tools-list.json",
+      "source": "https://github.com/rafe-walker/mcp-catalog-snap/blob/87b5a06bcf150e545dd06a9f347125ad09da0c66/test/fixtures/sweep/github-mcp-server-2.1.0.tools-list.json",
+      "format": "tools-json",
+      "sha256": "72b01b6f74a404f83467c5dc45f9828d5315b96a8b472631669f3f941fbce086",
+      "max_flagged": {
+        "info": 3,
+        "warning": 0,
+        "critical": 0
+      }
     }
   ]
 }

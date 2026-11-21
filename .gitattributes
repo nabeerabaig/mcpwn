@@ -2,3 +2,4 @@
 /bench/benign_pilot.json -text
 /bench/benign_public.json -text
 /bench/upstream/mcp_git_tools.json -text
+/bench/upstream/catalog-snap/*.json -text
