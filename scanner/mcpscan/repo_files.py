@@ -12,6 +12,9 @@ PATTERNS = [
     ".github/copilot-instructions.md", ".github/instructions/*.md",
     ".github/ISSUE_TEMPLATE/*", ".github/PULL_REQUEST_TEMPLATE*", ".github/pull_request_template*",
     ".cursor/rules/*", ".claude/commands/*.md", ".claude/agents/*.md",
+    "AGENTS.override.md", ".gemini/commands/**/*.toml",
+    ".opencode/agents/*.md", ".opencode/commands/*.md",
+    ".opencode/agent/*.md", ".opencode/command/*.md",
     ".clinerules", ".roo/rules/*", ".continuerules",
 ]
 

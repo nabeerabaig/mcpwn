@@ -1,6 +1,6 @@
-# mcp-injection-scanner (Claude Code plugin)
+# mcp-injection-scanner
 
-A plugin that scans MCP servers and agent instruction files for prompt injection, with a confidence score per finding instead of a binary flag. Pure Python standard library.
+A standalone CLI and Claude Code plugin that scan MCP servers and agent instruction files for prompt injection. The core scanner uses the Python standard library; YAML config discovery uses optional PyYAML.
 
 Status: **v0.2.0.**
 
@@ -42,10 +42,42 @@ python3 scanner/run.py repo . --include-mcp --format json
 python3 scanner/run.py proxy --server-name x --block-critical -- npx some-server
 ```
 
+## Use with other agents
+
+Use the standalone CLI with Python 3.11+. The Claude Code plugin still works as before; the other clients do not need to load a Claude plugin.
+
+| Client | `--client` | Supported config discovery |
+|---|---|---|
+| Claude, Cursor, VS Code, Windsurf | `legacy` (default for scans) | Existing JSON locations |
+| Gemini CLI | `gemini` | Project and user `.gemini/settings.json` (`command` or `httpUrl`; legacy `url`/SSE is skipped) |
+| OpenCode | `opencode` | Project and user `opencode.json` / `.jsonc`, plus `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` overrides as candidate paths |
+| Codex | `codex` | Project `.codex/config.toml` and `$CODEX_HOME/config.toml` (default `~/.codex`) |
+| Hermes Agent | `hermes` | `$HERMES_HOME/config.yaml` (default `~/.hermes`); requires PyYAML |
+| DeepSeek Harness | `deepseek` | Literal `@deepseek-ai/dsh-mcp-client` entries in `cordis.yml` and `cordis.patch.yml`, including profile patch files under `$DSH_HOME` (default `~/.dsh`); requires PyYAML |
+| Other clients | `--config PATH` | Explicit JSON/JSONC, TOML or YAML containing a supported MCP server block (`mcpServers`, `servers`, `mcp`, or `mcp_servers`), or use `--tools-json` |
+
+```bash
+# Optional: only needed for YAML configs (Hermes and DeepSeek)
+python3 -m pip install PyYAML
+
+# Discovery only: no processes launched, no network connections opened
+python3 scanner/run.py inventory --format json
+python3 scanner/run.py inventory --client deepseek --strict
+
+# Inspect tool definitions from a reviewed config
+python3 scanner/run.py scan --client gemini --only docs --format json
+python3 scanner/run.py scan --config /path/to/opencode.jsonc --only docs
+
+# Offline alternative when config uses client-specific features
+python3 scanner/run.py scan --tools-json saved_tools.json
+```
+
+`inventory` lists eligible server names, transports and config paths but omits command lines, headers, URLs and environment values. Discovery does not reproduce each client's config precedence, profile activation, or per-tool filters. When multiple files define the same server, use `--config` to select the one you intend to scan. Client-managed OAuth, variable interpolation, custom working directories, and legacy SSE are not supported. DeepSeek YAML with dynamic tags such as `!!js` is rejected, not evaluated. Use a plain static config or an exported tool list in these cases. New client discovery is opt-in for live scans; inventory defaults to all known clients. **Only live-scan servers and configs you trust.**
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.
-- stdio and streamable-HTTP servers are supported. For HTTP servers, scanning only sends MCP requests to the configured URL (with any headers from your config). Legacy SSE servers are reported as FAILED.
+- stdio and streamable-HTTP servers are supported. For HTTP servers, scanning only sends MCP requests to the configured URL (with any headers from your config). Legacy SSE servers are skipped with a diagnostic.
 
 ## Phase 2: dynamic confirmation
 

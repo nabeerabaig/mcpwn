@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import chains as chains_mod
 from . import dynamic, engine, pinning, proxy, report, repo_files, sandbox, tier3
-from .discovery import discover
+from .discovery import CLIENTS, discover
 from .mcp_client import McpError, fetch_tools
 from .models import Finding, ServerSpec, ToolDef, SEVERITY_ORDER
 
@@ -25,8 +25,8 @@ def collect_tools(args) -> tuple[list[ToolDef], list[str]]:
                 lst = d["tools"] if isinstance(d, dict) else d
                 tools.extend(ToolDef.from_mcp(sname, t, str(path)) for t in lst)
         return tools, notes
-    paths = [Path(p) for p in args.config] if getattr(args, "config", None) else None
-    specs = discover(paths, Path(args.project_dir))
+    paths = [Path(p) for p in args.config] if getattr(args, "config", None) is not None else None
+    specs = discover(paths, Path(args.project_dir), client=getattr(args, "client", "legacy"), notes=notes)
     if getattr(args, "only", None):
         specs = [s for s in specs if s.name in args.only]
     if getattr(args, "skip_self", True):
@@ -64,6 +64,9 @@ def cmd_scan(args) -> int:
         notes.append("--llm requested but no backend configured (set MCPSCAN_LLM_CMD or ANTHROPIC_API_KEY); Tier 3 skipped")
     findings = engine.scan_tools(tools, use_llm=args.llm)
     extra = {"tools_scanned": len(tools)}
+    if notes and args.format != "text":
+        for note in notes:
+            print(f"note: {note}", file=sys.stderr)
     if args.dynamic:
         findings, dnotes, stats = dynamic.apply(tools, findings, timeout=args.dynamic_timeout)
         notes.extend(dnotes)
@@ -193,11 +196,30 @@ def cmd_proxy(args) -> int:
                      egress=args.egress, allow_hosts=args.allow_host, block_egress=args.block_egress)
 
 
+def cmd_inventory(args) -> int:
+    notes: list[str] = []
+    paths = [Path(p) for p in args.config] if args.config is not None else None
+    specs = discover(paths, Path(args.project_dir), client=args.client, notes=notes)
+    # Do not echo command lines, URLs, environment variables, or headers.
+    rows = [{"name": spec.name, "transport": spec.transport, "source": spec.source} for spec in specs]
+    if args.format == "json":
+        print(json.dumps({"servers": rows, "notes": notes}, indent=2))
+    else:
+        for row in rows:
+            print(f"{row['name']} ({row['transport']}) — {row['source']}")
+        if not rows:
+            print("No supported MCP servers found.")
+        for note in notes:
+            print(f"note: {note}", file=sys.stderr)
+    return 1 if args.strict and notes else 0
+
+
 def _common(p, *, servers=True):
     p.add_argument("--project-dir", default=".", help="project directory used for config discovery")
     p.add_argument("--timeout", type=float, default=15.0)
     if servers:
-        p.add_argument("--config", nargs="*", help="explicit MCP config file(s)")
+        p.add_argument("--client", choices=CLIENTS[:-1], default="legacy", help="client config discovery scope")
+        p.add_argument("--config", nargs="+", help="explicit MCP config file(s)")
         p.add_argument("--tools-json", nargs="*", help="scan saved tools/list JSON instead of connecting")
         p.add_argument("--only", nargs="*", help="limit to named servers")
         p.add_argument("--no-skip-self", dest="skip_self", action="store_false")
@@ -206,6 +228,14 @@ def _common(p, *, servers=True):
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="mcp-scan", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("inventory", help="list configured MCP servers without launching or connecting")
+    p.add_argument("--project-dir", default=".")
+    p.add_argument("--client", choices=CLIENTS, default="all")
+    p.add_argument("--config", nargs="+", help="read only the given files")
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    p.add_argument("--strict", action="store_true", help="fail if any config has diagnostics")
+    p.set_defaults(fn=cmd_inventory)
 
     p = sub.add_parser("scan", help="scan MCP servers' tool definitions")
     _common(p)
