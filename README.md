@@ -107,6 +107,10 @@ The [composite action](action.yml) runs a single scan and writes SARIF even when
 
 The action defaults to `redact-evidence: "true"`: it omits raw snippets, free-form finding messages, and scan notes while preserving rule IDs, severities, and locations. Tool names, schema locations, and paths can still be sensitive. This is report redaction, not anonymization. For local CLI output, use `--redact-evidence` with `scan`, `drift`, or `repo` in text, JSON, or SARIF format.
 
+### Troubleshoot local tests
+
+Run `python -m unittest discover -v -s tests` (or `py -3 -m unittest discover -v -s tests` on Windows). Verbose mode shows which test failed and why optional tests were skipped. Use Python 3.11+ and install `PyYAML` if you want YAML discovery tests to run. Bash-specific composite-action tests are skipped on native Windows; the Linux CI job runs them. If a test fails, share the test name and the traceback below it, not only the final count.
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.

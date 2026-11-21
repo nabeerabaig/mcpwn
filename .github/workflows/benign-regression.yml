@@ -28,3 +28,16 @@ jobs:
           name: mcp-audit-dashboard
           path: mcp-audit.html
           if-no-files-found: ignore
+  windows-tests:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML
+      - run: python -m unittest discover -v -s tests
+      - run: python bench/evaluate_suites.py
+      - run: python bench/detection_gate.py
