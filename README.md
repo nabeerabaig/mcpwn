@@ -134,6 +134,8 @@ The [public MCP tool evaluation](bench/benign_public.md) adds ten doc-derived be
 
 Run the offline false-positive regression check with `python3 bench/evaluate_benign.py --max-flagged 0`. Add `--json` for per-tool results, or pass paths to your own known-benign `--tools-json` snapshots. GitHub Actions runs the bundled check on pushes and pull requests.
 
+The [benign benchmark suites](bench/benign-suites.md) report exact upstream snapshots separately from synthetic and doc-derived fixtures. Run `python3 bench/evaluate_suites.py` to reproduce the CI check.
+
 ## Other features
 
 - **Streamable HTTP** MCP servers (JSON and SSE replies) are scanned; legacy SSE transport is not.

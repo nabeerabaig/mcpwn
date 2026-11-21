@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "id": "synthetic-pilot",
+      "kind": "synthetic",
+      "fixture": "benign_pilot.json",
+      "source": "bench/benign_pilot.md",
+      "sha256": "eb603bb1d7ab571ecf0a33580640b4bb91ba56d544901ad8409a6a3469653244",
+      "max_flagged": {
+        "warning": 0
+      }
+    },
+    {
+      "id": "public-docs",
+      "kind": "doc-derived",
+      "fixture": "benign_public.json",
+      "source": "bench/benign_public.md",
+      "sha256": "17a8c47bff87ace536634940fe2c2b5f4a282f749d35f787335bc468101c217b",
+      "max_flagged": {
+        "warning": 0
+      }
+    },
+    {
+      "id": "upstream-mcp-git",
+      "kind": "upstream-snapshot",
+      "fixture": "upstream/mcp_git_tools.json",
+      "source": "https://github.com/modelcontextprotocol/servers/blob/c799c8552b0f27b7a33a7b9233773da144dddcf5/src/git/tests/snapshots/list_tools.json",
+      "sha256": "214a42aabdef7790ee236e187f783b6f962a9a29928e472a20ca51dc9555f964",
+      "max_flagged": {
+        "info": 1,
+        "warning": 0,
+        "critical": 0
+      }
+    }
+  ]
+}
