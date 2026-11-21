@@ -76,7 +76,10 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
     return tools, notes
 
 
-def emit(findings: list[Finding], fmt: str, notes: list[str], output: str | None, extra: dict | None = None) -> None:
+def emit(findings: list[Finding], fmt: str, notes: list[str], output: str | None, extra: dict | None = None, *, redact_evidence: bool = False) -> None:
+    if redact_evidence:
+        findings = report.without_evidence(findings)
+        notes = []
     text = {"json": lambda: report.to_json(findings, extra), "sarif": lambda: report.to_sarif(findings),
             "text": lambda: report.to_text(findings, notes)}[fmt]()
     if output:
@@ -92,16 +95,17 @@ def cmd_scan(args) -> int:
         notes.append("--llm requested but no backend configured (set MCPSCAN_LLM_CMD or ANTHROPIC_API_KEY); Tier 3 skipped")
     findings = engine.scan_tools(tools, use_llm=args.llm)
     extra = {"tools_scanned": len(tools)}
-    if notes and args.format != "text":
+    if notes and args.format != "text" and not args.redact_evidence:
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
     if args.dynamic:
         findings, dnotes, stats = dynamic.apply(tools, findings, timeout=args.dynamic_timeout)
         notes.extend(dnotes)
-        extra["dynamic"] = stats
+        if not args.redact_evidence:
+            extra["dynamic"] = stats
         findings.sort(key=lambda f: -f.confidence)
     findings = report.filter_min(findings, args.min_confidence)
-    emit(findings, args.format, notes, args.output, extra)
+    emit(findings, args.format, notes, args.output, extra, redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
 
 
@@ -141,7 +145,7 @@ def cmd_drift(args) -> int:
         return 2
     tools, notes = collect_tools(args)
     findings = pinning.diff(base, tools)
-    emit(findings, args.format, notes, args.output)
+    emit(findings, args.format, notes, args.output, redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
 
 
@@ -171,6 +175,9 @@ def cmd_watch(args) -> int:
 
 
 def cmd_repo(args) -> int:
+    if args.redact_evidence and args.format in ("hook", "markdown"):
+        print("repo: --redact-evidence supports text, JSON, and SARIF", file=sys.stderr)
+        return 2
     root = Path(args.path).resolve()
     if args.changed_since or args.files:
         names = list(args.files or [])
@@ -211,7 +218,8 @@ def cmd_repo(args) -> int:
         else:
             print(out)
         return 1 if report.exceeds(findings, args.fail_on) else 0
-    emit(findings, args.format, notes, args.output, {"agent_security_score": score})
+    emit(findings, args.format, notes, args.output, {"agent_security_score": score},
+         redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
 
 
@@ -375,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sandbox", choices=["docker"], help="launch servers inside a locked-down container")
     p.add_argument("--sandbox-image", default="node:22-slim")
     p.add_argument("--sandbox-network", default="none", help="docker network for sandboxed servers (none|bridge)")
+    p.add_argument("--redact-evidence", action="store_true", help="omit raw evidence, free-form finding text, and report notes")
     p.set_defaults(fn=cmd_scan)
 
     p = sub.add_parser("chains", help="cross-server exploit chain analysis")
@@ -392,6 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
         _common(p)
         p.add_argument("--baseline", default=pinning.DEFAULT_BASELINE)
         if name == "drift":
+            p.add_argument("--redact-evidence", action="store_true", help="omit raw evidence, free-form finding text, and report notes")
             p.add_argument("--format", choices=["text", "json", "sarif"], default="text")
             p.add_argument("--output")
             p.add_argument("--fail-on", choices=["none", "info", "warning", "critical"], default="warning")
@@ -411,6 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--changed-since", help="only scan agent files changed since this git ref (PR mode)")
     p.add_argument("--files", nargs="*", help="only scan these files (relative to path) if they are agent files")
     p.add_argument("--include-mcp", action="store_true", help="also connect to MCP servers and fold findings in")
+    p.add_argument("--redact-evidence", action="store_true", help="omit raw evidence, free-form finding text, and report notes")
     p.set_defaults(fn=cmd_repo)
 
     p = sub.add_parser("proxy", help="stdio proxy: inspect tools/list in flight")

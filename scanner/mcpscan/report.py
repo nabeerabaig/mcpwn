@@ -3,11 +3,18 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import replace
 
 from . import __version__
 from .models import Finding, SEVERITY_ORDER
 
 SARIF_LEVEL = {"critical": "error", "warning": "warning", "info": "note"}
+
+
+def without_evidence(findings: list[Finding]) -> list[Finding]:
+    """Discard raw snippets and free-form text, keeping CI locations and severity."""
+    return [replace(f, evidence="", title=f.rule_id,
+                    message="Finding details omitted by report redaction.") for f in findings]
 
 
 def filter_min(findings: list[Finding], min_conf: float) -> list[Finding]:
