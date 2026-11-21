@@ -1,0 +1,4 @@
+# Benchmark manifests pin exact fixture bytes. Preserve them across checkouts.
+/bench/benign_pilot.json -text
+/bench/benign_public.json -text
+/bench/upstream/mcp_git_tools.json -text
