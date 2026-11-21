@@ -45,3 +45,13 @@ Reports omit raw descriptions, schemas, and evidence, but include identifiers an
 Use a trusted copy of the manifest and baselines. If untrusted pull requests can replace their own baseline, policy, or audit code, they can make a gate pass. Protect those files with review, or run a trusted audit harness against snapshots supplied by the branch. Preserve the audit step's nonzero exit code and upload the JSON report as an artifact if appropriate. Never collect live snapshots from untrusted PR configs.
 
 The manifest accepts up to 100 projects. Each referenced snapshot must be a JSON file within the manifest directory (including subdirectories), at most 8 MiB and 5,000 tools. Unknown manifest fields, duplicate JSON keys, and duplicate tool names within a server are rejected.
+
+## Share an offline dashboard
+
+```bash
+python3 scanner/run.py audit bench/audit-manifest.json --format html --output mcp-audit.html
+```
+
+Open `mcp-audit.html` in a browser. It includes policy totals, expandable projects, baseline changes, and filters for findings by search, severity, and status. The file needs no server, network access, or external assets. If scripts are disabled, the full report still renders and projects remain expandable; only the filters are unavailable.
+
+The repository workflow uploads a demo dashboard as the **mcp-audit-dashboard** artifact when a valid report was generated. A policy failure still writes a report and returns exit code `1`; it does not turn the check green. Share reports only with people who should see the included tool and project identifiers.
