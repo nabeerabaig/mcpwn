@@ -28,7 +28,7 @@ jobs:
           fail-on: critical
           changed-since: ${{ github.event.pull_request.base.sha }}
       - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: ${{ !cancelled() && hashFiles('mcpscan.sarif') != '' }}
         with: { sarif_file: mcpscan.sarif }
   drift:
     # Requires a committed baseline and a saved tools/list snapshot so no server is launched in CI.
@@ -41,3 +41,8 @@ jobs:
           baseline: .mcp-scan/baseline.json
           tools-json: .mcp-scan/current-tools.json
           fail-on: warning
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('mcpscan.sarif') != '' }}
+        with:
+          name: drift-report
+          path: mcpscan.sarif

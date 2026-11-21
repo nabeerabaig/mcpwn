@@ -101,6 +101,12 @@ Compare two captured snapshots without connecting to any server. The report list
 
 Run `python3 scanner/run.py audit bench/audit-manifest.json --format json` to see a multi-project audit entirely offline. The [audit guide](docs/portfolio-audit.md) explains how to set a shared policy, compare against trusted baselines, and gate CI on new findings or tool metadata changes.
 
+## Run the scanner in CI
+
+The [composite action](action.yml) runs a single scan and writes SARIF even when a finding exceeds `fail-on`. In `scan` or `drift` mode it requires saved `tools-json` snapshots and never falls back to launching configured MCP servers. Use the direct CLI, not PR CI, when you intentionally want to connect to reviewed servers.
+
+The action defaults to `redact-evidence: "true"`: it omits raw snippets, free-form finding messages, and scan notes while preserving rule IDs, severities, and locations. Tool names, schema locations, and paths can still be sensitive. This is report redaction, not anonymization. For local CLI output, use `--redact-evidence` with `scan`, `drift`, or `repo` in text, JSON, or SARIF format.
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.
