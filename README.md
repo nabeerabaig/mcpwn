@@ -111,6 +111,10 @@ The action defaults to `redact-evidence: "true"`: it omits raw snippets, free-fo
 
 Run `python -m unittest discover -v -s tests` (or `py -3 -m unittest discover -v -s tests` on Windows). Verbose mode shows which test failed and why optional tests were skipped. Use Python 3.11+ and install `PyYAML` if you want YAML discovery tests to run. Bash-specific composite-action tests are skipped on native Windows; the Linux CI job runs them. If a test fails, share the test name and the traceback below it, not only the final count.
 
+### Require complete inventories
+
+Use `scan --strict` or `drift --strict` to exit `2` on incomplete collection or invalid inventory input rather than use partial results. The composite CI action enables this automatically for `scan` and `drift`. `pin` always requires complete collection and does not replace the baseline if collection fails. An explicitly named server with zero tools is valid; a file with no server inventories is not. Strict drift flags servers absent from the selected inventory, so compare the same scope you originally pinned or use `--only` on both sides. Exit code `1` still means a completed scan produced a finding at the configured threshold.
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.

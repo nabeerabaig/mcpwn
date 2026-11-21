@@ -40,7 +40,7 @@ else
         if [[ ! -f "$file" ]]; then echo 'A tools-json snapshot is missing.' >&2; exit 2; fi
         case "$file" in /*|./*|../*) safe_files+=("$file");; *) safe_files+=("./$file");; esac
     done
-    args+=(--tools-json "${safe_files[@]}")
+    args+=(--tools-json "${safe_files[@]}" --strict)
     if [[ "$mode" == drift ]]; then args+=("--baseline=${BASELINE:-.mcp-scan/baseline.json}"); fi
 fi
 if [[ "$redact" == true ]]; then args+=(--redact-evidence); fi
