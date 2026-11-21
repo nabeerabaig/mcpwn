@@ -67,7 +67,7 @@
       "format": "tools-json",
       "sha256": "72b01b6f74a404f83467c5dc45f9828d5315b96a8b472631669f3f941fbce086",
       "max_flagged": {
-        "info": 3,
+        "info": 1,
         "warning": 0,
         "critical": 0
       }
