@@ -74,6 +74,21 @@ python3 scanner/run.py scan --tools-json saved_tools.json
 
 `inventory` lists eligible server names, transports and config paths but omits command lines, headers, URLs and environment values. Discovery does not reproduce each client's config precedence, profile activation, or per-tool filters. When multiple files define the same server, use `--config` to select the one you intend to scan. Client-managed OAuth, variable interpolation, custom working directories, and legacy SSE are not supported. DeepSeek YAML with dynamic tags such as `!!js` is rejected, not evaluated. Use a plain static config or an exported tool list in these cases. New client discovery is opt-in for live scans; inventory defaults to all known clients. **Only live-scan servers and configs you trust.**
 
+## Save tool definitions and scan them offline
+
+```bash
+# Read only the selected trusted server's tool definitions and save them once.
+python3 scanner/run.py snapshot --connect --client opencode --only docs --output docs-tools.json
+
+# Later, scan the saved definitions with no server startup or network requests.
+python3 scanner/run.py scan --tools-json docs-tools.json --format json
+
+# Combine existing snapshots from distinct servers without connecting.
+python3 scanner/run.py snapshot --tools-json first.json second.json --output combined.json
+```
+
+Snapshots do not copy config commands, URLs, headers, or environment values. They do retain tool descriptions and schemas verbatim as parsed, and those may themselves contain sensitive data. Review before sharing and keep snapshots outside version control unless they are intended as public fixtures. The command refuses to overwrite existing files and doesn't write a partial snapshot if discovery or collection fails. It captures metadata, not tool responses or proof of server safety.
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.
