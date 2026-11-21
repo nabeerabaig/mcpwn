@@ -8,22 +8,38 @@ import time
 from pathlib import Path
 
 from . import chains as chains_mod
-from . import dynamic, engine, pinning, proxy, report, repo_files, sandbox, tier3
+from . import dynamic, engine, pinning, proxy, report, repo_files, sandbox, snapshot, tier3
 from .discovery import CLIENTS, discover
 from .mcp_client import McpError, fetch_tools
 from .models import Finding, ServerSpec, ToolDef, SEVERITY_ORDER
 
 
-def collect_tools(args) -> tuple[list[ToolDef], list[str]]:
+class CaptureError(ValueError):
+    pass
+
+
+def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolDef], list[str]]:
     notes: list[str] = []
     tools: list[ToolDef] = []
     if getattr(args, "tools_json", None):
         for path in args.tools_json:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
-            servers = data if isinstance(data, dict) and "tools" not in data else {Path(path).stem: data}
+            if not isinstance(data, dict):
+                raise CaptureError("expected a tools object or server map")
+            servers = {Path(path).stem: data} if isinstance(data.get("tools"), list) else data
             for sname, d in servers.items():
-                lst = d["tools"] if isinstance(d, dict) else d
+                if getattr(args, "only", None) and sname not in args.only:
+                    continue
+                lst = d.get("tools") if isinstance(d, dict) else d
+                if not isinstance(lst, list) or not all(isinstance(t, dict) for t in lst):
+                    raise CaptureError("expected a list of tool objects per server")
+                if captured is not None:
+                    if sname in captured:
+                        raise CaptureError("server name appears in more than one input snapshot")
+                    captured.add(sname)
                 tools.extend(ToolDef.from_mcp(sname, t, str(path)) for t in lst)
+        if captured is not None and not set(args.only or ()).issubset(captured):
+            raise CaptureError("one or more requested servers were not present in the inputs")
         return tools, notes
     paths = [Path(p) for p in args.config] if getattr(args, "config", None) is not None else None
     specs = discover(paths, Path(args.project_dir), client=getattr(args, "client", "legacy"), notes=notes)
@@ -33,6 +49,14 @@ def collect_tools(args) -> tuple[list[ToolDef], list[str]]:
         specs = [s for s in specs if "mcpscan" not in s.name.lower() and "mcp-injection-scanner" not in s.name.lower()]
     if not specs:
         notes.append("no MCP servers found in client configs")
+    if captured is not None:
+        if notes:
+            raise CaptureError("config discovery was incomplete; inspect it with inventory --strict")
+        names = {spec.name for spec in specs}
+        if len(names) != len(specs):
+            raise CaptureError("multiple configs define the same server; select one with --config")
+        if not set(args.only or ()).issubset(names):
+            raise CaptureError("one or more requested servers were not discovered")
     for s in specs:
         try:
             if getattr(args, "sandbox", None) == "docker" and s.transport == "stdio":
@@ -42,8 +66,12 @@ def collect_tools(args) -> tuple[list[ToolDef], list[str]]:
                 s = sandbox.wrap(s, args.sandbox_image, args.sandbox_network)
             got = fetch_tools(s, args.timeout)
             tools.extend(got)
+            if captured is not None:
+                captured.add(s.name)
             notes.append(f"{s.name}: {len(got)} tools")
         except McpError as e:
+            if captured is not None:
+                raise CaptureError(f"{s.name}: MCP capture failed; no snapshot written") from None
             notes.append(f"{s.name}: FAILED ({e})")
     return tools, notes
 
@@ -196,6 +224,32 @@ def cmd_proxy(args) -> int:
                      egress=args.egress, allow_hosts=args.allow_host, block_egress=args.block_egress)
 
 
+def cmd_snapshot(args) -> int:
+    if bool(args.tools_json) == args.connect:
+        print("snapshot: choose exactly one of --tools-json (offline) or --connect (trusted servers only)",
+              file=sys.stderr)
+        return 2
+    if args.tools_json and args.config:
+        print("snapshot: --config is only supported with --connect", file=sys.stderr)
+        return 2
+    destination = Path(args.output)
+    if destination.exists() or destination.is_symlink():
+        print("snapshot: destination already exists; choose a new file", file=sys.stderr)
+        return 2
+    captured: set[str] = set()
+    try:
+        tools, _ = collect_tools(args, captured=captured)
+        snapshot.save(destination, tools, captured)
+    except CaptureError as exc:
+        print(f"snapshot: {exc}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, TypeError, RecursionError):
+        print("snapshot: could not read the inputs or write a valid new snapshot", file=sys.stderr)
+        return 2
+    print(f"Saved {len(tools)} tool definitions from {len(captured)} servers to {destination}")
+    return 0
+
+
 def cmd_inventory(args) -> int:
     notes: list[str] = []
     paths = [Path(p) for p in args.config] if args.config is not None else None
@@ -220,7 +274,7 @@ def _common(p, *, servers=True):
     if servers:
         p.add_argument("--client", choices=CLIENTS[:-1], default="legacy", help="client config discovery scope")
         p.add_argument("--config", nargs="+", help="explicit MCP config file(s)")
-        p.add_argument("--tools-json", nargs="*", help="scan saved tools/list JSON instead of connecting")
+        p.add_argument("--tools-json", nargs="+", help="scan saved tools/list JSON instead of connecting")
         p.add_argument("--only", nargs="*", help="limit to named servers")
         p.add_argument("--no-skip-self", dest="skip_self", action="store_false")
 
@@ -236,6 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=["text", "json"], default="text")
     p.add_argument("--strict", action="store_true", help="fail if any config has diagnostics")
     p.set_defaults(fn=cmd_inventory)
+
+    p = sub.add_parser("snapshot", help="save MCP tool definitions for repeatable offline scans")
+    _common(p)
+    p.add_argument("--connect", action="store_true", help="allow launching or connecting to trusted MCP servers")
+    p.add_argument("--output", required=True, help="new JSON file; existing files are never replaced")
+    p.set_defaults(fn=cmd_snapshot)
 
     p = sub.add_parser("scan", help="scan MCP servers' tool definitions")
     _common(p)
