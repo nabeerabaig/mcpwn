@@ -11,6 +11,7 @@ import time
 from .models import ServerSpec, ToolDef
 
 PROTOCOL_VERSION = "2025-06-18"
+MAX_TOOL_PAGES = 50
 
 
 class McpError(Exception):
@@ -26,25 +27,29 @@ class StdioSession:
             self.proc = subprocess.Popen(
                 [spec.command, *map(str, spec.args)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                env=env, text=True, bufsize=1,
+                env=env, encoding="utf-8", bufsize=1,
             )
         except (OSError, ValueError) as e:
             raise McpError(f"cannot start server: {e}") from e
         self._q: queue.Queue = queue.Queue()
         self._id = 0
-        threading.Thread(target=self._reader, daemon=True).start()
+        self._reader_thread = threading.Thread(target=self._reader, daemon=True)
+        self._reader_thread.start()
 
     def _reader(self) -> None:
         assert self.proc.stdout
-        for line in self.proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                self._q.put(json.loads(line))
-            except json.JSONDecodeError:
-                continue  # servers sometimes log to stdout
-        self._q.put(None)
+        try:
+            for line in self.proc.stdout:
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # tolerate text logs on stdout
+                if isinstance(message, dict):
+                    self._q.put(message)
+        except (UnicodeError, OSError):
+            self._q.put(McpError("server stdout is not readable UTF-8"))
+        finally:
+            self._q.put(None)
 
     def _send(self, obj: dict) -> None:
         assert self.proc.stdin
@@ -58,15 +63,17 @@ class StdioSession:
         self._id += 1
         rid = self._id
         self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
-        deadline = time.time() + self.timeout
+        deadline = time.monotonic() + self.timeout
         while True:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise McpError(f"timeout waiting for {method}")
             try:
                 msg = self._q.get(timeout=remaining)
             except queue.Empty:
                 raise McpError(f"timeout waiting for {method}")
+            if isinstance(msg, McpError):
+                raise msg
             if msg is None:
                 raise McpError("server exited before responding")
             if msg.get("id") == rid:
@@ -77,17 +84,57 @@ class StdioSession:
     def close(self) -> None:
         try:
             if self.proc.stdin:
-                self.proc.stdin.close()
-            self.proc.terminate()
-            self.proc.wait(timeout=3)
-        except Exception:
-            self.proc.kill()
+                try:
+                    self.proc.stdin.close()
+                except OSError:
+                    pass  # child may have already closed its input
+            if self.proc.poll() is None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait(timeout=3)
+        finally:
+            self._reader_thread.join(timeout=0.5)
+            if not self._reader_thread.is_alive() and self.proc.stdout:
+                self.proc.stdout.close()
+
+
+def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
+    """Collect a complete inventory or raise—never return a truncated snapshot."""
+    tools: list[ToolDef] = []
+    cursors: set[str] = set()
+    names: set[str] = set()
+    cursor = None
+    for _ in range(MAX_TOOL_PAGES):
+        result = request("tools/list", {"cursor": cursor} if cursor is not None else {})
+        if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+            raise McpError("tools/list result must contain a tools array")
+        for raw in result["tools"]:
+            if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"].strip():
+                raise McpError("tools/list contains a tool without a valid name")
+            if raw["name"] in names:
+                raise McpError("tools/list contains duplicate tool names")
+            if "inputSchema" in raw and not isinstance(raw["inputSchema"], dict):
+                raise McpError("tools/list tool inputSchema must be an object")
+            names.add(raw["name"])
+            tools.append(ToolDef.from_mcp(spec.name, raw, spec.source))
+        cursor = result.get("nextCursor")
+        if cursor is None:
+            return tools
+        if not isinstance(cursor, str) or not cursor:
+            raise McpError("tools/list nextCursor must be a nonempty string")
+        if cursor in cursors:
+            raise McpError("tools/list repeated a pagination cursor")
+        cursors.add(cursor)
+    raise McpError(f"tools/list exceeded the {MAX_TOOL_PAGES}-page limit")
 
 
 def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
     """Streamable HTTP replies are either a JSON body or an SSE stream containing the response."""
     if "text/event-stream" in content_type:
-        for block in raw.split("\n\n"):
+        for block in raw.replace("\r\n", "\n").split("\n\n"):
             data = "\n".join(l[5:].strip() for l in block.splitlines() if l.startswith("data:"))
             if not data:
                 continue
@@ -104,7 +151,7 @@ def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
         return None
     if isinstance(msg, list):
         msg = next((m for m in msg if isinstance(m, dict) and m.get("id") == rid), None)
-    return msg
+    return msg if isinstance(msg, dict) and msg.get("id") == rid else None
 
 
 def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
@@ -148,15 +195,7 @@ def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
     rpc("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
                        "clientInfo": {"name": "mcpscan", "version": "0.2.0"}})
     post({"jsonrpc": "2.0", "method": "notifications/initialized"}, expect_response=False)
-    tools: list[ToolDef] = []
-    cursor = None
-    for _ in range(50):
-        res = rpc("tools/list", {"cursor": cursor} if cursor else {})
-        tools.extend(ToolDef.from_mcp(spec.name, t, spec.source) for t in res.get("tools", []))
-        cursor = res.get("nextCursor")
-        if not cursor:
-            break
-    return tools
+    return _list_tools(spec, rpc)
 
 
 def fetch_tools(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
@@ -172,14 +211,6 @@ def fetch_tools(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
             "clientInfo": {"name": "mcpscan", "version": "0.2.0"},
         })
         sess._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        tools: list[ToolDef] = []
-        cursor = None
-        for _ in range(50):
-            res = sess.request("tools/list", {"cursor": cursor} if cursor else {})
-            tools.extend(ToolDef.from_mcp(spec.name, t, spec.source) for t in res.get("tools", []))
-            cursor = res.get("nextCursor")
-            if not cursor:
-                break
-        return tools
+        return _list_tools(spec, sess.request)
     finally:
         sess.close()
