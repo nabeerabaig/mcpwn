@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "policy": {"minimum_severity": "warning", "gate": "all", "max_violations": 0},
+  "projects": [
+    {"id": "synthetic-pilot", "snapshot": "benign_pilot.json"},
+    {"id": "public-docs", "snapshot": "benign_public.json"}
+  ]
+}

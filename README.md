@@ -97,6 +97,10 @@ python3 scanner/run.py snapshot-diff before.json after.json --format json --fail
 
 Compare two captured snapshots without connecting to any server. The report lists added and removed servers and tools, and whether a retained tool's description or input schema changed. It does not print the metadata values. JSON object key order does not matter. Exit codes: `0` for a successful comparison by default, `1` for changes with `--fail-on-change`, and `2` for invalid input. A change is a review signal, not a finding of malicious behavior; use `scan --tools-json after.json` to evaluate the new metadata separately.
 
+## Audit a group of projects
+
+Run `python3 scanner/run.py audit bench/audit-manifest.json --format json` to see a multi-project audit entirely offline. The [audit guide](docs/portfolio-audit.md) explains how to set a shared policy, compare against trusted baselines, and gate CI on new findings or tool metadata changes.
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.
