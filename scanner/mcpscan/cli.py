@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from . import chains as chains_mod
-from . import dynamic, engine, pinning, portfolio, proxy, report, repo_files, sandbox, snapshot, tier3
+from . import audit_html, dynamic, engine, pinning, portfolio, proxy, report, repo_files, sandbox, snapshot, tier3
 from .discovery import CLIENTS, discover
 from .mcp_client import McpError, fetch_tools
 from .models import Finding, ServerSpec, ToolDef, SEVERITY_ORDER
@@ -227,7 +227,12 @@ def cmd_proxy(args) -> int:
 def cmd_audit(args) -> int:
     try:
         result = portfolio.audit(Path(args.manifest))
-        text = json.dumps(result, indent=2) if args.format == "json" else portfolio.to_text(result)
+        if args.format == "json":
+            text = json.dumps(result, indent=2)
+        elif args.format == "html":
+            text = audit_html.render(result)
+        else:
+            text = portfolio.to_text(result)
         if args.output:
             # Reports may contain private tool names. Do not overwrite evidence or fixtures.
             with Path(args.output).open("x", encoding="utf-8") as stream:
@@ -340,7 +345,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("audit", help="audit multiple projects from saved snapshots, offline")
     p.add_argument("manifest", help="version 1 JSON audit manifest")
-    p.add_argument("--format", choices=["text", "json"], default="text")
+    p.add_argument("--format", choices=["text", "json", "html"], default="text")
     p.add_argument("--output", help="write to a new report file instead of stdout")
     p.set_defaults(fn=cmd_audit)
 

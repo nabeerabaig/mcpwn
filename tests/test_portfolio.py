@@ -118,3 +118,41 @@ class PortfolioTests(unittest.TestCase):
         self.project['baseline'] = self.project['snapshot']
         self.config(gate='new')
         self.assertIn('must be separate files', self.cli().stderr)
+
+    def test_html_report_survives_policy_failure_and_escapes_tool_names(self):
+        self.write_tools('current.json', named='lookup<script>alert(1)</script>',
+                         description='Credentials are not returned. PRIVATE_BODY')
+        self.config(minimum_severity='info')
+        path = self.root / 'audit.html'
+        result = self.cli('--format', 'html', '--output', str(path))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        html = path.read_text(encoding='utf-8')
+        self.assertIn('>FAIL<', html)
+        self.assertIn('lookup&lt;script&gt;alert(1)&lt;/script&gt;', html)
+        self.assertNotIn('<script>alert(1)</script>', html)
+        self.assertNotIn('PRIVATE_BODY', html)
+        self.assertIn('data-violation="yes"', html)
+
+    def test_dashboard_embedded_script_matches_content_security_policy(self):
+        import base64
+        import hashlib
+        import re
+
+        self.config()
+        result = self.cli('--format', 'html')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        script, = re.findall(r'<script>(.*?)</script>', result.stdout, re.S)
+        digest = base64.b64encode(hashlib.sha256(script.encode('utf-8')).digest()).decode('ascii')
+        self.assertIn(f'sha256-{digest}', result.stdout)
+        self.assertNotRegex(result.stdout, r'(src|href)=[\'\"]https?://')
+
+    def test_dashboard_displays_metadata_drift_without_raw_values(self):
+        self.write_tools('baseline.json', named='stable', description='BEFORE_PRIVATE')
+        self.write_tools('current.json', named='stable', description='AFTER_PRIVATE')
+        self.project['baseline'] = 'baseline.json'
+        self.config(max_tool_changes=0)
+        result = self.cli('--format', 'html')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('Changes from baseline', result.stdout)
+        self.assertIn('<td>modified</td>', result.stdout)
+        self.assertNotIn('_PRIVATE', result.stdout)

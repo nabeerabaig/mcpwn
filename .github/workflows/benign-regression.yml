@@ -17,3 +17,13 @@ jobs:
       - run: python -m unittest discover -s tests
       - run: python bench/evaluate_benign.py --max-flagged 0
       - run: python scanner/run.py audit bench/audit-manifest.json --format json
+      - name: Generate audit dashboard
+        if: ${{ !cancelled() }}
+        run: python scanner/run.py audit bench/audit-manifest.json --format html --output mcp-audit.html
+      - name: Upload audit dashboard
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-audit-dashboard
+          path: mcp-audit.html
+          if-no-files-found: ignore
