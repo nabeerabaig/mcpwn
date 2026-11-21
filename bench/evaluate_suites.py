@@ -9,12 +9,34 @@ from pathlib import Path
 import re
 import sys
 
-from evaluate_benign import evaluate, SEVERITY_ORDER
+from evaluate_benign import evaluate, evaluate_loaded, SEVERITY_ORDER
+from mcpscan.models import ToolDef
 
 DEFAULT = Path(__file__).with_name("benign-suites.json")
 KINDS = ("synthetic", "doc-derived", "upstream-snapshot")
 FIELDS = {"id", "kind", "fixture", "source", "sha256", "max_flagged"}
 SUITE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\Z")
+
+
+def evaluate_catalog(path: Path) -> dict:
+    """Read only the tool metadata, not prompts or resources, from a catalog."""
+    data = json.loads(path.read_bytes())
+    if not isinstance(data, dict) or data.get("format") != "mcp-catalog-snap/1":
+        raise ValueError("expected an mcp-catalog-snap/1 envelope")
+    server, catalog = data.get("server"), data.get("catalog")
+    if not isinstance(server, dict) or not isinstance(catalog, dict):
+        raise ValueError("catalog missing server or catalog object")
+    name, raw_tools = server.get("name"), catalog.get("tools")
+    if not isinstance(name, str) or not name.strip() or not isinstance(raw_tools, list):
+        raise ValueError("catalog missing server name or tool list")
+    tools = []
+    for raw in raw_tools:
+        if (not isinstance(raw, dict) or not isinstance(raw.get("name"), str)
+                or not isinstance(raw.get("description", ""), str)
+                or not isinstance(raw.get("inputSchema"), dict)):
+            raise ValueError("malformed catalog tool metadata")
+        tools.append(ToolDef.from_mcp(name, raw, str(path)))
+    return evaluate_loaded([(path, tools)])
 
 
 def run(manifest: Path, selected: set[str]) -> dict:
@@ -28,8 +50,10 @@ def run(manifest: Path, selected: set[str]) -> dict:
     plans = {}
     used_paths = set()
     for spec in data["suites"]:
-        if not isinstance(spec, dict) or set(spec) != FIELDS:
+        if not isinstance(spec, dict) or not FIELDS <= set(spec) or set(spec) - FIELDS - {"format"}:
             raise ValueError("invalid suite fields")
+        if spec.get("format", "tools-json") not in ("tools-json", "mcp-catalog-snap/1"):
+            raise ValueError("unsupported suite fixture format")
         name = spec["id"]
         if not isinstance(name, str) or not SUITE_ID.fullmatch(name) or name in plans:
             raise ValueError("invalid or duplicate suite ID")
@@ -58,7 +82,8 @@ def run(manifest: Path, selected: set[str]) -> dict:
             continue
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != spec["sha256"]:
             raise ValueError(f"{name}: missing fixture or SHA-256 mismatch")
-        result = evaluate([path])
+        result = (evaluate_catalog(path) if spec.get("format") == "mcp-catalog-snap/1"
+                  else evaluate([path]))
         counts = result["by_highest_severity"]
         n = result["tools_scanned"]
         thresholds = {}

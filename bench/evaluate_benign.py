@@ -21,9 +21,17 @@ DEFAULT_FIXTURES = [ROOT / "bench" / name for name in
 
 def evaluate(paths: list[Path], threshold: str = "warning") -> dict:
     """Count each tool once; treat files as independent server snapshots."""
+    def load():
+        for path in paths:
+            tools, _ = collect_tools(argparse.Namespace(tools_json=[path]))
+            yield path, tools
+    return evaluate_loaded(load(), threshold)
+
+
+def evaluate_loaded(snapshots, threshold: str = "warning") -> dict:
+    """Apply the same tool-level scoring to every input format."""
     rows = []
-    for path in paths:
-        tools, _ = collect_tools(argparse.Namespace(tools_json=[path]))
+    for path, tools in snapshots:
         keys = [(tool.server, tool.name) for tool in tools]
         if not keys or any(not name.strip() for _, name in keys):
             raise ValueError(f"{path}: expected a nonempty set of named tools")
