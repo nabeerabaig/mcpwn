@@ -48,8 +48,13 @@ EXEC = re.compile(
 READ_SENSITIVE = re.compile(r"\b(read|open|cat|load|access|get|include|attach|append|copy)\b[^.\n]{0,50}", re.I)
 
 CROSS_TOOL = re.compile(
-    r"\b(call|use|invoke|run)\b[^.\n]{0,25}\b(the )?([a-z_][a-z0-9_]{2,}) (tool|function)\b", re.I
+    r"\b(?:call|use|invoke|run)[ \t]+(?:first[ \t]+)?(?:the[ \t]+)?"
+    r"(?P<quote>[`'\"]?)(?P<target>[a-z_][a-z0-9_-]{2,})(?P=quote)"
+    r"[ \t]+(?:tool|function)\b", re.I
 )
+GENERIC_TOOL_REFERENTS = frozenset({
+    "this", "that", "these", "those", "the", "any", "each", "either", "another", "other", "same",
+})
 
 INSTRUCTION_PARAM = re.compile(  # never legitimate in a generic tool
     r"^(prompt_?override|assistant_?note|note_?to_?(ai|assistant|model|llm)|"
@@ -126,10 +131,12 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
                       "Text references running commands" + (" and directs the agent to." if directed else "."),
                       0.8 if piped else (0.6 if directed else 0.2), xm.group(0)))
 
-    # 4. cross-tool dependency (benign by default; elevated only if tool is unknown AND sensitive)
+    # 4. A named reference outside the known tool list is informational, not proof of injection.
+    # Generic wording such as “use this tool” does not name a tool.
+    known_tools = {t.lower() for t in sibling_tools} | {tool.lower()}
     for cm in CROSS_TOOL.finditer(text):
-        target = cm.group(3).lower()
-        if target in {t.lower() for t in sibling_tools} or target == tool.lower():
+        target = cm.group("target").lower()
+        if target in GENERIC_TOOL_REFERENTS or target in known_tools:
             continue  # standard dependency docs: not suspicious
         out.append(mk("T2-UNKNOWN-TOOL-REF", "References a tool not in this server",
                       f"Description tells the agent to call '{target}', which this server does not define.", 0.4, cm.group(0)))

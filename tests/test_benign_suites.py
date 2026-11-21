@@ -27,7 +27,7 @@ class SuiteTests(unittest.TestCase):
         self.assertEqual(upstream['thresholds']['warning']['flagged'], 0)
         github = suites['upstream-github-sweep']
         self.assertEqual({row['tool'] for row in github['flagged_tools']},
-                         {'actions_get', 'actions_list', 'list_pull_requests'})
+                         {'list_pull_requests'})
 
     def test_suite_selection(self):
         result = self.cli('--json', '--suite', 'upstream-mcp-git')
