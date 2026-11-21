@@ -61,3 +61,36 @@ class SnapshotTests(unittest.TestCase):
         text = self.out.read_text(encoding='utf-8')
         self.assertNotIn('never-export-this', text)
         self.assertEqual(len(json.loads(text)['a_mock']['tools']), 3)
+
+    def test_diff_reports_changes_without_echoing_metadata(self):
+        before = self.root / 'before.json'
+        after = self.root / 'after.json'
+        before.write_text(json.dumps({'docs': {'tools': [
+            {'name': 'lookup', 'description': 'private-before'}, {'name': 'obsolete'}]},
+            'old-empty': {'tools': []}}), encoding='utf-8')
+        after.write_text(json.dumps({'docs': {'tools': [
+            {'name': 'lookup', 'description': 'private-after', 'inputSchema': {'type': 'object'}},
+            {'name': 'new'}]}, 'new-empty': {'tools': []}}), encoding='utf-8')
+        result = self.run_cli('snapshot-diff', before, after, '--format', 'json', '--fail-on-change')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertNotIn('private-', result.stdout)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['servers_added'], ['new-empty'])
+        self.assertEqual(report['servers_removed'], ['old-empty'])
+        self.assertEqual({row['change'] for row in report['tools']}, {'added', 'removed', 'modified'})
+        self.assertEqual(report['tools'][0]['fields'], ['description', 'inputSchema'])
+
+    def test_diff_ignores_json_key_order(self):
+        before = self.root / 'before.json'
+        after = self.root / 'after.json'
+        for path, keys in ((before, ('a', 'b')), (after, ('b', 'a'))):
+            path.write_text(json.dumps({'docs': {'tools': [
+                {'name': 'lookup', 'inputSchema': {'properties': {k: {'type': 'string'} for k in keys}}}
+            ]}}), encoding='utf-8')
+        result = self.run_cli('snapshot-diff', before, after, '--fail-on-change')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('No snapshot changes', result.stdout)
+
+    def test_diff_rejects_duplicate_tool_names(self):
+        self.out.write_text('{"docs":{"tools":[{"name":"same"},{"name":"same"}]}}', encoding='utf-8')
+        self.assertEqual(self.run_cli('snapshot-diff', self.out, self.out).returncode, 2)

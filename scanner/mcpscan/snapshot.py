@@ -31,3 +31,37 @@ def save(path: Path, tools: list[ToolDef], servers: set[str]) -> None:
     except BaseException:
         path.unlink(missing_ok=True)
         raise
+
+
+def compare(before: list[ToolDef], after: list[ToolDef],
+            before_servers: set[str], after_servers: set[str]) -> dict:
+    """Compare scanner-relevant fields without echoing their contents."""
+    def index(tools):
+        result = {}
+        for tool in tools:
+            key = (tool.server, tool.name)
+            if (key in result or not all(name.strip() for name in key)
+                    or not isinstance(tool.input_schema, dict)):
+                raise ValueError("invalid or duplicate tool identity or schema")
+            result[key] = tool.to_dict()
+        return result
+
+    old, new = index(before), index(after)
+    changes = []
+    for server, tool in sorted(old.keys() | new.keys()):
+        key = (server, tool)
+        row = {"server": server, "tool": tool}
+        if key not in old:
+            changes.append({**row, "change": "added"})
+        elif key not in new:
+            changes.append({**row, "change": "removed"})
+        else:
+            fields = [field for field in ("description", "inputSchema")
+                      if json.dumps(old[key][field], sort_keys=True, allow_nan=False)
+                      != json.dumps(new[key][field], sort_keys=True, allow_nan=False)]
+            if fields:
+                changes.append({**row, "change": "modified", "fields": fields})
+    added = sorted(after_servers - before_servers)
+    removed = sorted(before_servers - after_servers)
+    return {"changed": bool(changes or added or removed),
+            "servers_added": added, "servers_removed": removed, "tools": changes}

@@ -89,6 +89,14 @@ python3 scanner/run.py snapshot --tools-json first.json second.json --output com
 
 Snapshots do not copy config commands, URLs, headers, or environment values. They do retain tool descriptions and schemas verbatim as parsed, and those may themselves contain sensitive data. Review before sharing and keep snapshots outside version control unless they are intended as public fixtures. The command refuses to overwrite existing files and doesn't write a partial snapshot if discovery or collection fails. It captures metadata, not tool responses or proof of server safety.
 
+### Review snapshot changes in CI
+
+```bash
+python3 scanner/run.py snapshot-diff before.json after.json --format json --fail-on-change
+```
+
+Compare two captured snapshots without connecting to any server. The report lists added and removed servers and tools, and whether a retained tool's description or input schema changed. It does not print the metadata values. JSON object key order does not matter. Exit codes: `0` for a successful comparison by default, `1` for changes with `--fail-on-change`, and `2` for invalid input. A change is a review signal, not a finding of malicious behavior; use `scan --tools-json after.json` to evaluate the new metadata separately.
+
 ## Safety notes
 
 - `scan`, `chains`, `pin`, `drift`, `watch` launch your configured stdio servers to read their tool lists. Use `--tools-json` to avoid starting anything.

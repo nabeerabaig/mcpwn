@@ -224,6 +224,34 @@ def cmd_proxy(args) -> int:
                      egress=args.egress, allow_hosts=args.allow_host, block_egress=args.block_egress)
 
 
+def cmd_snapshot_diff(args) -> int:
+    try:
+        old_servers: set[str] = set()
+        new_servers: set[str] = set()
+        old, _ = collect_tools(argparse.Namespace(tools_json=[args.before], only=None), captured=old_servers)
+        new, _ = collect_tools(argparse.Namespace(tools_json=[args.after], only=None), captured=new_servers)
+        if not old_servers or not new_servers or any(not name.strip() for name in old_servers | new_servers):
+            raise ValueError("invalid snapshot server map")
+        result = snapshot.compare(old, new, old_servers, new_servers)
+    except (OSError, ValueError, TypeError, RecursionError):
+        print("snapshot-diff: could not read or compare valid snapshots", file=sys.stderr)
+        return 2
+    if args.format == "json":
+        print(json.dumps(result, indent=2))
+    elif not result["changed"]:
+        print("No snapshot changes.")
+    else:
+        # JSON quoting prevents control characters in untrusted names from being interpreted by terminals.
+        for key in ("servers_added", "servers_removed"):
+            for name in result[key]:
+                print(f"{key}: {json.dumps(name)}")
+        for row in result["tools"]:
+            name = json.dumps(f"{row['server']}/{row['tool']}")
+            fields = f" ({', '.join(row['fields'])})" if "fields" in row else ""
+            print(f"{row['change']}: {name}{fields}")
+    return int(args.fail_on_change and result["changed"])
+
+
 def cmd_snapshot(args) -> int:
     if bool(args.tools_json) == args.connect:
         print("snapshot: choose exactly one of --tools-json (offline) or --connect (trusted servers only)",
@@ -290,6 +318,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=["text", "json"], default="text")
     p.add_argument("--strict", action="store_true", help="fail if any config has diagnostics")
     p.set_defaults(fn=cmd_inventory)
+
+    p = sub.add_parser("snapshot-diff", help="compare two saved tool snapshots entirely offline")
+    p.add_argument("before")
+    p.add_argument("after")
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    p.add_argument("--fail-on-change", action="store_true", help="exit 1 when metadata changed")
+    p.set_defaults(fn=cmd_snapshot_diff)
 
     p = sub.add_parser("snapshot", help="save MCP tool definitions for repeatable offline scans")
     _common(p)
