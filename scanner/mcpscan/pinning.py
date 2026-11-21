@@ -39,9 +39,24 @@ def load(path: str | Path) -> dict | None:
     if not p.is_file():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        baseline = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
         return None
+    if not isinstance(baseline, dict) or type(baseline.get("version")) is not int or baseline["version"] != 1:
+        return None
+    servers = baseline.get("servers")
+    if not isinstance(servers, dict) or not servers:
+        return None
+    for name, tools in servers.items():
+        if not name.strip() or not isinstance(tools, dict):
+            return None
+        for tool, record in tools.items():
+            if not tool.strip() or not isinstance(record, dict) or any(
+                not isinstance(record.get(field), str)
+                for field in ("hash", "description_hash", "schema_hash", "description")
+            ):
+                return None
+    return baseline
 
 
 def save(path: str | Path, snap: dict) -> None:
@@ -55,10 +70,18 @@ def side_by_side(old: str, new: str) -> str:
     return "\n".join(diff)[:1500]
 
 
-def diff(baseline: dict, current_tools: list[ToolDef]) -> list[Finding]:
+def diff(baseline: dict, current_tools: list[ToolDef], *,
+         current_servers: set[str] | None = None) -> list[Finding]:
     findings: list[Finding] = []
     cur = snapshot(current_tools)["servers"]
     base = baseline.get("servers", {})
+    if current_servers is not None:
+        for name in sorted(current_servers):
+            cur.setdefault(name, {})
+        for name in sorted(base.keys() - current_servers):
+            findings.append(Finding("T4-SERVER-REMOVED", 4, "Server absent from current inventory",
+                                    "A pinned server is absent from the selected complete inventory.",
+                                    0.55, server=name))
     by_key = {(t.server, t.name): t for t in current_tools}
 
     for server, tools in cur.items():

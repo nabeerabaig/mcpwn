@@ -18,12 +18,22 @@ class CaptureError(ValueError):
     pass
 
 
+def _unique_json_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise CaptureError("snapshot contains a duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolDef], list[str]]:
     notes: list[str] = []
     tools: list[ToolDef] = []
     if getattr(args, "tools_json", None):
         for path in args.tools_json:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            data = json.loads(Path(path).read_text(encoding="utf-8"),
+                              object_pairs_hook=_unique_json_fields if captured is not None else None)
             if not isinstance(data, dict):
                 raise CaptureError("expected a tools object or server map")
             servers = {Path(path).stem: data} if isinstance(data.get("tools"), list) else data
@@ -36,10 +46,26 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
                 if captured is not None:
                     if sname in captured:
                         raise CaptureError("server name appears in more than one input snapshot")
+                    if not sname.strip():
+                        raise CaptureError("snapshot contains an empty server name")
+                    names = set()
+                    for raw in lst:
+                        name = raw.get("name")
+                        if not isinstance(name, str) or not name.strip() or name in names:
+                            raise CaptureError("snapshot contains a missing or duplicate tool name")
+                        if not isinstance(raw.get("description", ""), str):
+                            raise CaptureError("snapshot tool description must be a string")
+                        for field in ("inputSchema", "input_schema"):
+                            if field in raw and not isinstance(raw[field], dict):
+                                raise CaptureError("snapshot tool schema must be an object")
+                        names.add(name)
                     captured.add(sname)
                 tools.extend(ToolDef.from_mcp(sname, t, str(path)) for t in lst)
-        if captured is not None and not set(args.only or ()).issubset(captured):
-            raise CaptureError("one or more requested servers were not present in the inputs")
+        if captured is not None:
+            if not set(getattr(args, "only", None) or ()).issubset(captured):
+                raise CaptureError("one or more requested servers were not present in the inputs")
+            if not captured:
+                raise CaptureError("snapshot has no server inventories")
         return tools, notes
     paths = [Path(p) for p in args.config] if getattr(args, "config", None) is not None else None
     specs = discover(paths, Path(args.project_dir), client=getattr(args, "client", "legacy"), notes=notes)
@@ -55,12 +81,14 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
         names = {spec.name for spec in specs}
         if len(names) != len(specs):
             raise CaptureError("multiple configs define the same server; select one with --config")
-        if not set(args.only or ()).issubset(names):
+        if not set(getattr(args, "only", None) or ()).issubset(names):
             raise CaptureError("one or more requested servers were not discovered")
     for s in specs:
         try:
             if getattr(args, "sandbox", None) == "docker" and s.transport == "stdio":
                 if not sandbox.docker_available():
+                    if captured is not None:
+                        raise CaptureError("Docker sandbox requested but Docker is unavailable")
                     notes.append(f"{s.name}: FAILED (--sandbox docker requested but docker is not installed)")
                     continue
                 s = sandbox.wrap(s, args.sandbox_image, args.sandbox_network)
@@ -71,9 +99,19 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
             notes.append(f"{s.name}: {len(got)} tools")
         except McpError as e:
             if captured is not None:
-                raise CaptureError(f"{s.name}: MCP capture failed; no snapshot written") from None
+                raise CaptureError("MCP server collection failed; inventory is incomplete") from None
             notes.append(f"{s.name}: FAILED ({e})")
     return tools, notes
+
+
+def _collect_for_command(args, captured: set[str] | None):
+    try:
+        return collect_tools(args, captured=captured)
+    except CaptureError as exc:
+        print(f"{args.cmd}: {exc}", file=sys.stderr)
+    except (OSError, ValueError, RecursionError):
+        print(f"{args.cmd}: could not read a valid MCP inventory", file=sys.stderr)
+    return None
 
 
 def emit(findings: list[Finding], fmt: str, notes: list[str], output: str | None, extra: dict | None = None, *, redact_evidence: bool = False) -> None:
@@ -90,7 +128,10 @@ def emit(findings: list[Finding], fmt: str, notes: list[str], output: str | None
 
 
 def cmd_scan(args) -> int:
-    tools, notes = collect_tools(args)
+    result = _collect_for_command(args, set() if args.strict else None)
+    if result is None:
+        return 2
+    tools, notes = result
     if args.llm and not tier3.backend_available():
         notes.append("--llm requested but no backend configured (set MCPSCAN_LLM_CMD or ANTHROPIC_API_KEY); Tier 3 skipped")
     findings = engine.scan_tools(tools, use_llm=args.llm)
@@ -129,8 +170,14 @@ def cmd_chains(args) -> int:
 
 
 def cmd_pin(args) -> int:
-    tools, notes = collect_tools(args)
+    captured: set[str] = set()
+    result = _collect_for_command(args, captured)
+    if result is None:
+        return 2
+    tools, notes = result
     snap = pinning.snapshot(tools)
+    for name in sorted(captured):
+        snap["servers"].setdefault(name, {})
     pinning.save(args.baseline, snap)
     print(f"pinned {len(tools)} tools across {len(snap['servers'])} server(s) -> {args.baseline}")
     for n in notes:
@@ -141,10 +188,17 @@ def cmd_pin(args) -> int:
 def cmd_drift(args) -> int:
     base = pinning.load(args.baseline)
     if base is None:
-        print(f"no baseline at {args.baseline}; run `pin` first", file=sys.stderr)
+        print("drift: missing or invalid baseline; run `pin` with a complete inventory", file=sys.stderr)
         return 2
-    tools, notes = collect_tools(args)
-    findings = pinning.diff(base, tools)
+    captured: set[str] | None = set() if args.strict else None
+    result = _collect_for_command(args, captured)
+    if result is None:
+        return 2
+    tools, notes = result
+    if args.only:
+        base = {**base, "servers": {name: records for name, records in base["servers"].items()
+                                     if name in args.only}}
+    findings = pinning.diff(base, tools, current_servers=captured)
     emit(findings, args.format, notes, args.output, redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
 
@@ -384,6 +438,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sandbox-image", default="node:22-slim")
     p.add_argument("--sandbox-network", default="none", help="docker network for sandboxed servers (none|bridge)")
     p.add_argument("--redact-evidence", action="store_true", help="omit raw evidence, free-form finding text, and report notes")
+    p.add_argument("--strict", action="store_true", help="exit 2 instead of scanning an incomplete inventory")
     p.set_defaults(fn=cmd_scan)
 
     p = sub.add_parser("chains", help="cross-server exploit chain analysis")
@@ -401,6 +456,7 @@ def build_parser() -> argparse.ArgumentParser:
         _common(p)
         p.add_argument("--baseline", default=pinning.DEFAULT_BASELINE)
         if name == "drift":
+            p.add_argument("--strict", action="store_true", help="require a complete inventory for drift checks")
             p.add_argument("--redact-evidence", action="store_true", help="omit raw evidence, free-form finding text, and report notes")
             p.add_argument("--format", choices=["text", "json", "sarif"], default="text")
             p.add_argument("--output")
