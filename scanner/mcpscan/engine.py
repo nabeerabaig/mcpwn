@@ -106,8 +106,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
     findings = dedupe(findings)
     semantic_applied = False
     if use_llm and tier3.backend_available():
-        extra = tier3.apply(tool, findings)
-        semantic_applied = any(f.tier == 3 for f in extra)
+        extra, semantic_applied = tier3.apply_with_status(tool, findings)
         findings.extend(extra)
 
     total = len(discovered)
