@@ -68,16 +68,47 @@ jobs:
           }
           print("Execution outcomes:")
           print(json.dumps(outcomes, indent=2))
+          reports = {}
           for label, path in (
               ("main", Path("baseline/baseline-benchmark.json")),
               ("upgrade", Path("candidate/candidate-benchmark.json")),
           ):
-              if path.exists():
-                  report = json.loads(path.read_text(encoding="utf-8"))
-                  print(f"{label} benchmark:")
-                  print(json.dumps(report.get("summary", {}), indent=2))
-              else:
+              if not path.exists():
                   print(f"{label} benchmark report missing")
+                  continue
+              report = json.loads(path.read_text(encoding="utf-8"))
+              summary = report.get("summary")
+              if not isinstance(summary, dict):
+                  # The unchanged main benchmark predates the summary object. Derive
+                  # identical confusion-matrix metrics from its per-case records.
+                  malicious = report.get("malicious", [])
+                  benign = report.get("benign", [])
+                  tp = sum(bool(row.get("flagged")) for row in malicious)
+                  fp = sum(bool(row.get("flagged")) for row in benign)
+                  fn, tn = len(malicious) - tp, len(benign) - fp
+                  precision = tp / (tp + fp) if tp + fp else None
+                  recall = tp / (tp + fn) if tp + fn else 0.0
+                  f1 = (2 * precision * recall / (precision + recall)
+                        if precision is not None and precision + recall else 0.0)
+                  summary = {
+                      "true_positives": tp, "false_positives": fp,
+                      "true_negatives": tn, "false_negatives": fn,
+                      "precision": precision, "recall": recall, "f1": f1,
+                      "malicious_cases": len(malicious), "benign_cases": len(benign),
+                      "coverage_metrics": "not available in legacy main benchmark",
+                  }
+              reports[label] = summary
+              print(f"{label} benchmark:")
+              print(json.dumps(summary, indent=2))
+          if "main" in reports and "upgrade" in reports:
+              print("Upgrade minus main:")
+              print(json.dumps({
+                  key: reports["upgrade"].get(key, 0) - reports["main"].get(key, 0)
+                  for key in ("true_positives", "false_positives", "true_negatives",
+                              "false_negatives", "recall", "precision", "f1")
+                  if isinstance(reports["upgrade"].get(key), (int, float))
+                  and isinstance(reports["main"].get(key), (int, float))
+              }, indent=2))
           if any(value != "success" for value in outcomes.values()):
               raise SystemExit("Baseline comparison failed; inspect the individual test and benchmark logs.")
           PY
