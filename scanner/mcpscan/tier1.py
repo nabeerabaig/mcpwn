@@ -87,17 +87,25 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
         msg = f"Invisible characters found ({kinds})."
         if smuggled:
             msg += f" Decoded hidden text: {smuggled[:120]!r}"
-        findings.append(mk("T1-HIDDEN-UNICODE", "Hidden Unicode characters", msg, conf, smuggled))
+        findings.append(mk("T1-HIDDEN-UNICODE", "Hidden Unicode characters", msg, conf, text[:200]))
         if smuggled:
-            findings.extend(scan_text(smuggled, tool=tool, server=server, location=location + "#hidden", source=source))
+            decoded_findings = scan_text(smuggled, tool=tool, server=server,
+                                          location=location + "#hidden", source=source)
+            for finding in decoded_findings:
+                finding.evidence = text[:200]
+                finding.message += " Detected in hidden Unicode-decoded text; original source evidence is preserved."
+            findings.extend(decoded_findings)
 
     # override phrases
     lowered = unicodedata.normalize("NFKC", text)
     for pat, name, conf in OVERRIDE_PATTERNS:
         m = re.search(pat, lowered, re.I)
         if m:
+            matched = m.group(0)
+            original_evidence = matched if matched in text else text[:200]
+            note = " Text was matched after NFKC normalization." if matched not in text else ""
             findings.append(mk(f"T1-{name.upper()}", f"Injection phrase: {name}",
-                               f"Text matches '{name}' pattern.", conf, m.group(0)))
+                               f"Text matches '{name}' pattern.{note}", conf, original_evidence))
 
     # base64 payloads
     for m in _B64_RE.finditer(text):
@@ -111,9 +119,14 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
             continue
         if _SUSPICIOUS_DECODED.search(decoded):
             findings.append(mk("T1-BASE64-PAYLOAD", "Base64-encoded instruction payload",
-                               "Base64 blob decodes to text containing instruction/exfiltration keywords.", 0.9, decoded))
-            findings.extend(scan_text(decoded, tool=tool, server=server, location=location + "#b64", source=source)[:3])
+                               "Base64 blob decodes to text containing instruction/exfiltration keywords.", 0.9, blob))
+            decoded_findings = scan_text(decoded, tool=tool, server=server,
+                                          location=location + "#b64", source=source)[:3]
+            for finding in decoded_findings:
+                finding.evidence = blob
+                finding.message += " Detected in decoded base64 content; original encoded evidence is preserved."
+            findings.extend(decoded_findings)
         elif len(decoded) >= 24 and " " in decoded:
             findings.append(mk("T1-BASE64-TEXT", "Base64-encoded readable text",
-                               "Opaque base64 blob that decodes to prose; unusual in a tool definition.", 0.55, decoded))
+                               "Opaque base64 blob that decodes to prose; unusual in a tool definition.", 0.55, blob))
     return findings
