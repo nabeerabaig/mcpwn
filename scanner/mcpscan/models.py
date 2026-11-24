@@ -139,6 +139,9 @@ class ToolDef:
 
     @classmethod
     def from_mcp(cls, server: str, raw: dict, source: str = "") -> "ToolDef":
+        validation_error = validate_tool_raw(raw)
+        if validation_error:
+            raise ValueError(validation_error)
         known = {"name", "description", "inputSchema", "input_schema", "outputSchema",
                  "output_schema", "annotations", "_meta"}
         return cls(
