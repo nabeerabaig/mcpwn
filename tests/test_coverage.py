@@ -37,10 +37,12 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(any(location.startswith("outputSchema") for location in coverage["scanned_locations"]))
 
     def test_unsupported_values_are_reported_as_partial_coverage(self):
-        tool = ToolDef("local", "lookup", "Ordinary description", {}, extra={"opaque": b"binary"})
+        tool = ToolDef("local", "lookup", "Ordinary description", {}, extra={"opaque": b"binary", 17: "invalid metadata key"})
         _findings, coverage = engine.scan_tool_with_coverage(tool)
         self.assertEqual(coverage["status"], "partially_scanned")
         self.assertTrue(any(item["location"] == "additionalMetadata.opaque"
+                            for item in coverage["unsupported_fields"]))
+        self.assertTrue(any("non-string object key" in item["reason"]
                             for item in coverage["unsupported_fields"]))
 
     def test_empty_text_and_non_text_scalars_are_not_claimed_as_scanned(self):
