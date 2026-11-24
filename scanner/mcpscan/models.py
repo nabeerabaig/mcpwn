@@ -48,23 +48,42 @@ class ToolDef:
     description: str = ""
     input_schema: dict = field(default_factory=dict)
     source: str = ""
+    output_schema: dict | None = None
+    annotations: dict = field(default_factory=dict)
+    meta: dict = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)
 
     @classmethod
     def from_mcp(cls, server: str, raw: dict, source: str = "") -> "ToolDef":
+        known = {"name", "description", "inputSchema", "input_schema", "outputSchema",
+                 "output_schema", "annotations", "_meta"}
         return cls(
             server=server,
             name=str(raw.get("name", "")),
             description=str(raw.get("description", "") or ""),
             input_schema=raw.get("inputSchema") or raw.get("input_schema") or {},
             source=source,
+            output_schema=raw.get("outputSchema") or raw.get("output_schema"),
+            annotations=raw.get("annotations") if isinstance(raw.get("annotations"), dict) else {},
+            meta=raw.get("_meta") if isinstance(raw.get("_meta"), dict) else {},
+            extra={k: v for k, v in raw.items() if k not in known},
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "inputSchema": self.input_schema,
         }
+        if self.output_schema is not None:
+            result["outputSchema"] = self.output_schema
+        if self.annotations:
+            result["annotations"] = self.annotations
+        if self.meta:
+            result["_meta"] = self.meta
+        if self.extra:
+            result["extra"] = self.extra
+        return result
 
 
 @dataclass
