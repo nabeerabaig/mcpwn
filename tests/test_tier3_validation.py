@@ -24,6 +24,8 @@ class Tier3ValidationTests(unittest.TestCase):
             '{"injection": true, "confidence": true, "reason": "boolean is not a score"}',
             '{"injection": true, "confidence": NaN, "reason": "non-finite"}',
             '{"injection": true, "confidence": Infinity, "reason": "non-finite"}',
+            '{"injection": true, "confidence": 0.9, "confidence": 0.1, "reason": "duplicate field"}',
+            '{"injection": true, "confidence": 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999, "reason": "oversized integer"}',
             '{"injection": true, "confidence": -0.1, "reason": "out of range"}',
             '{"injection": true, "confidence": 1.1, "reason": "out of range"}',
             '{"injection": true, "confidence": 0.9, "reason": 12}',
