@@ -8,13 +8,22 @@ import subprocess
 import threading
 import time
 
-from .models import ServerSpec, ToolDef
+from . import __version__
+from .models import ServerSpec, ToolDef, validate_tool_raw
 
 PROTOCOL_VERSION = "2025-06-18"
 MAX_TOOL_PAGES = 50
+MAX_TOOL_COUNT = 10_000
+MAX_RPC_LINE_CHARS = 2_000_000
+MAX_HTTP_BODY_BYTES = 2_000_000
+MAX_PENDING_MESSAGES = 1_000
 
 
 class McpError(Exception):
+    pass
+
+
+class McpMethodNotFound(McpError):
     pass
 
 
@@ -31,7 +40,7 @@ class StdioSession:
             )
         except (OSError, ValueError) as e:
             raise McpError(f"cannot start server: {e}") from e
-        self._q: queue.Queue = queue.Queue()
+        self._q: queue.Queue = queue.Queue(maxsize=MAX_PENDING_MESSAGES)
         self._id = 0
         self._reader_thread = threading.Thread(target=self._reader, daemon=True)
         self._reader_thread.start()
@@ -39,7 +48,13 @@ class StdioSession:
     def _reader(self) -> None:
         assert self.proc.stdout
         try:
-            for line in self.proc.stdout:
+            while True:
+                line = self.proc.stdout.readline(MAX_RPC_LINE_CHARS + 1)
+                if not line:
+                    break
+                if len(line) > MAX_RPC_LINE_CHARS:
+                    self._q.put(McpError(f"server stdout line exceeds {MAX_RPC_LINE_CHARS} characters"))
+                    break
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError:
@@ -78,7 +93,10 @@ class StdioSession:
                 raise McpError("server exited before responding")
             if msg.get("id") == rid:
                 if "error" in msg:
-                    raise McpError(f"{method} error: {msg['error']}")
+                    error = msg["error"]
+                    if isinstance(error, dict) and error.get("code") == -32601:
+                        raise McpMethodNotFound(f"{method} is not supported by this server")
+                    raise McpError(f"{method} error: {error}")
                 return msg.get("result") or {}
 
     def close(self) -> None:
@@ -112,14 +130,17 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
             raise McpError("tools/list result must contain a tools array")
         for raw in result["tools"]:
-            if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"].strip():
+            if not isinstance(raw, dict):
                 raise McpError("tools/list contains a tool without a valid name")
+            validation_error = validate_tool_raw(raw)
+            if validation_error:
+                raise McpError(f"tools/list {validation_error}")
             if raw["name"] in names:
                 raise McpError("tools/list contains duplicate tool names")
-            if "inputSchema" in raw and not isinstance(raw["inputSchema"], dict):
-                raise McpError("tools/list tool inputSchema must be an object")
             names.add(raw["name"])
             tools.append(ToolDef.from_mcp(spec.name, raw, spec.source))
+            if len(tools) > MAX_TOOL_COUNT:
+                raise McpError(f"tools/list exceeded the {MAX_TOOL_COUNT}-tool inventory limit")
         cursor = result.get("nextCursor")
         if cursor is None:
             return tools
@@ -129,6 +150,68 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
             raise McpError("tools/list repeated a pagination cursor")
         cursors.add(cursor)
     raise McpError(f"tools/list exceeded the {MAX_TOOL_PAGES}-page limit")
+
+
+def _list_collection(request, method: str, key: str) -> list[dict]:
+    """Collect one paginated MCP metadata collection without returning partial results."""
+    items: list[dict] = []
+    cursors: set[str] = set()
+    identities: set[str] = set()
+    cursor = None
+    for _ in range(MAX_TOOL_PAGES):
+        result = request(method, {"cursor": cursor} if cursor is not None else {})
+        if not isinstance(result, dict) or not isinstance(result.get(key), list):
+            raise McpError(f"{method} result must contain a {key} array")
+        for item in result[key]:
+            if not isinstance(item, dict):
+                raise McpError(f"{method} contains a non-object entry")
+            identity = item.get("name") or item.get("uri") or item.get("uriTemplate")
+            if not isinstance(identity, str) or not identity.strip():
+                raise McpError(f"{method} entry is missing a valid name or URI")
+            if identity in identities:
+                raise McpError(f"{method} contains duplicate entries")
+            identities.add(identity)
+            items.append(item)
+            if len(items) > MAX_TOOL_COUNT:
+                raise McpError(f"{method} exceeded the {MAX_TOOL_COUNT}-item inventory limit")
+        cursor = result.get("nextCursor")
+        if cursor is None:
+            return items
+        if not isinstance(cursor, str) or not cursor:
+            raise McpError(f"{method} nextCursor must be a nonempty string")
+        if cursor in cursors:
+            raise McpError(f"{method} repeated a pagination cursor")
+        cursors.add(cursor)
+    raise McpError(f"{method} exceeded the {MAX_TOOL_PAGES}-page limit")
+
+
+def _collect_protocol_surfaces(server: str, source: str, capabilities: dict, request) -> list[dict]:
+    """Inventory advertised descriptors only; never read resource bodies or invoke prompts."""
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    resources_advertised = isinstance(capabilities.get("resources"), dict)
+    prompts_advertised = isinstance(capabilities.get("prompts"), dict)
+    definitions = (
+        ("prompts", "prompts/list", "prompts", prompts_advertised),
+        ("resources", "resources/list", "resources", resources_advertised),
+        ("resource_templates", "resources/templates/list", "resourceTemplates", resources_advertised),
+    )
+    records = []
+    for surface, method, key, advertised in definitions:
+        record = {"server": server, "source": source, "surface": surface,
+                  "status": "not_advertised", "items": [], "items_discovered": 0,
+                  "reason": "server did not advertise this capability"}
+        if not advertised:
+            records.append(record)
+            continue
+        try:
+            items = _list_collection(request, method, key)
+            record.update(status="scanned", items=items, items_discovered=len(items), reason="")
+        except McpMethodNotFound as exc:
+            record.update(status="unsupported", reason=str(exc))
+        except McpError as exc:
+            record.update(status="failed", reason=str(exc))
+        records.append(record)
+    return records
 
 
 def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
@@ -154,25 +237,36 @@ def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
     return msg if isinstance(msg, dict) and msg.get("id") == rid else None
 
 
-def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
+def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0, *,
+                         include_surfaces: bool = True) -> tuple[list[ToolDef], list[dict]]:
     import urllib.error
     import urllib.request
     session_id = None
     counter = [0]
 
     def post(payload: dict, expect_response: bool = True) -> dict | None:
-        headers = {"content-type": "application/json", "accept": "application/json, text/event-stream",
-                   "MCP-Protocol-Version": PROTOCOL_VERSION, **{str(k): str(v) for k, v in (spec.headers or {}).items()}}
+        headers = {
+            "content-type": "application/json",
+            "accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
+            **{str(k): str(v) for k, v in (spec.headers or {}).items()},
+        }
         if session_id:
             headers["Mcp-Session-Id"] = session_id
         req = urllib.request.Request(spec.url, data=json.dumps(payload).encode(), headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 sid = resp.headers.get("Mcp-Session-Id")
-                body = resp.read().decode("utf-8", "replace")
+                body_bytes = resp.read(MAX_HTTP_BODY_BYTES + 1)
+                if len(body_bytes) > MAX_HTTP_BODY_BYTES:
+                    raise McpError(f"HTTP response exceeds {MAX_HTTP_BODY_BYTES} bytes")
+                try:
+                    body = body_bytes.decode("utf-8", "strict")
+                except UnicodeDecodeError as exc:
+                    raise McpError("HTTP response is not valid UTF-8") from exc
                 ctype = resp.headers.get("content-type", "")
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            raise McpError(f"http error: {e}") from e
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise McpError(f"http error: {exc}") from exc
         nonlocal_set(sid)
         if not expect_response:
             return None
@@ -180,7 +274,10 @@ def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
         if msg is None:
             raise McpError(f"no response to {payload.get('method')}")
         if "error" in msg:
-            raise McpError(f"{payload.get('method')} error: {msg['error']}")
+            error = msg["error"]
+            if isinstance(error, dict) and error.get("code") == -32601:
+                raise McpMethodNotFound(f"{payload.get('method')} is not supported by this server")
+            raise McpError(f"{payload.get('method')} error: {error}")
         return msg.get("result") or {}
 
     def nonlocal_set(sid):
@@ -192,25 +289,46 @@ def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
         counter[0] += 1
         return post({"jsonrpc": "2.0", "id": counter[0], "method": method, "params": params or {}})
 
-    rpc("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                       "clientInfo": {"name": "mcpscan", "version": "0.2.0"}})
+    initialized = rpc("initialize", {
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "mcpscan", "version": __version__},
+    })
     post({"jsonrpc": "2.0", "method": "notifications/initialized"}, expect_response=False)
-    return _list_tools(spec, rpc)
+    tools = _list_tools(spec, rpc)
+    capabilities = initialized.get("capabilities", {}) if isinstance(initialized, dict) else {}
+    surfaces = (_collect_protocol_surfaces(spec.name, spec.source, capabilities, rpc)
+                if include_surfaces else [])
+    return tools, surfaces
+
+
+def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
+    return fetch_inventory_http(spec, timeout, include_surfaces=False)[0]
+
+
+def fetch_inventory(spec: ServerSpec, timeout: float = 15.0, *,
+                    include_surfaces: bool = True) -> tuple[list[ToolDef], list[dict]]:
+    if spec.transport in ("http", "streamable-http", "streamableHttp") and spec.url:
+        return fetch_inventory_http(spec, timeout, include_surfaces=include_surfaces)
+    if spec.transport != "stdio":
+        raise McpError(f"transport '{spec.transport}' not supported (stdio and streamable HTTP only; legacy SSE is not)")
+    session = StdioSession(spec, timeout)
+    try:
+        initialized = session.request("initialize", {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "mcpscan", "version": __version__},
+        })
+        session._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        tools = _list_tools(spec, session.request)
+        capabilities = initialized.get("capabilities", {}) if isinstance(initialized, dict) else {}
+        surfaces = (_collect_protocol_surfaces(spec.name, spec.source, capabilities, session.request)
+                    if include_surfaces else [])
+        return tools, surfaces
+    finally:
+        session.close()
 
 
 def fetch_tools(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
-    if spec.transport in ("http", "streamable-http", "streamableHttp") and spec.url:
-        return fetch_tools_http(spec, timeout)
-    if spec.transport != "stdio":
-        raise McpError(f"transport '{spec.transport}' not supported (stdio and streamable HTTP only; legacy SSE is not)")
-    sess = StdioSession(spec, timeout)
-    try:
-        sess.request("initialize", {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "mcpscan", "version": "0.2.0"},
-        })
-        sess._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        return _list_tools(spec, sess.request)
-    finally:
-        sess.close()
+    # Preserve the historical tools-only behavior for commands that do not request extended inventory.
+    return fetch_inventory(spec, timeout, include_surfaces=False)[0]

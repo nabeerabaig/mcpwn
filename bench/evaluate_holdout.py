@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Evaluate the frozen, author-curated holdout set without changing detector thresholds."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+from collections import Counter, defaultdict
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scanner"))
+
+from mcpscan import engine
+from mcpscan.models import ToolDef
+
+DEFAULT = Path(__file__).with_name("holdout-v1.json")
+
+
+def evaluate(path: Path = DEFAULT) -> dict:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
+            or not isinstance(data.get("cases"), list) or not data["cases"]):
+        raise ValueError("expected a nonempty version 1 holdout dataset")
+    threshold = data.get("threshold", 0.5)
+    if type(threshold) not in (int, float) or not 0 < threshold <= 1:
+        raise ValueError("threshold must be greater than 0 and at most 1")
+    seen = set()
+    rows = []
+    for case in data["cases"]:
+        if (not isinstance(case, dict) or set(case) != {"id", "label", "category", "source_type", "tool"}
+                or case["label"] not in ("malicious", "benign")
+                or not isinstance(case["id"], str) or not case["id"] or case["id"] in seen
+                or not isinstance(case["category"], str) or not isinstance(case["source_type"], str)
+                or not isinstance(case["tool"], dict)):
+            raise ValueError("invalid or duplicate holdout case")
+        seen.add(case["id"])
+        raw = case["tool"]
+        if (not isinstance(raw.get("name"), str) or not raw["name"].strip()
+                or not isinstance(raw.get("description", ""), str)
+                or not isinstance(raw.get("inputSchema", {}), dict)):
+            raise ValueError(f"{case['id']}: malformed tool definition")
+        tool = ToolDef.from_mcp("holdout", raw, source=str(path))
+        findings, coverage = engine.scan_tool_with_coverage(tool)
+        top = max((finding.confidence for finding in findings), default=0.0)
+        tiers = sorted({finding.tier for finding in findings if finding.confidence >= threshold})
+        rows.append({
+            "id": case["id"], "label": case["label"], "category": case["category"],
+            "source_type": case["source_type"], "flagged": top >= threshold,
+            "top_confidence": top, "tiers": tiers,
+            "rules": sorted({finding.rule_id for finding in findings if finding.confidence >= threshold}),
+            "coverage_status": coverage["status"],
+            "fields_discovered": coverage["fields_discovered"],
+            "fields_scanned": coverage["fields_scanned"],
+        })
+    malicious = [row for row in rows if row["label"] == "malicious"]
+    benign = [row for row in rows if row["label"] == "benign"]
+    tp = sum(row["flagged"] for row in malicious)
+    fn = len(malicious) - tp
+    fp = sum(row["flagged"] for row in benign)
+    tn = len(benign) - fp
+    precision = tp / (tp + fp) if tp + fp else None
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision is not None and precision + recall else 0.0
+    categories = defaultdict(lambda: {"cases": 0, "flagged": 0})
+    source_types = defaultdict(lambda: {"cases": 0, "flagged": 0})
+    layer_hits = Counter()
+    for row in rows:
+        for bucket, key in ((categories, row["category"]), (source_types, row["source_type"])):
+            bucket[key]["cases"] += 1
+            bucket[key]["flagged"] += int(row["flagged"])
+        if row["label"] == "malicious":
+            layer_hits.update(row["tiers"])
+    return {
+        "dataset": data.get("name", path.name),
+        "provenance": data.get("provenance", ""),
+        "threshold": threshold,
+        "summary": {
+            "true_positives": tp, "false_positives": fp,
+            "true_negatives": tn, "false_negatives": fn,
+            "precision": precision, "recall": recall, "f1": f1,
+            "malicious_cases": len(malicious), "benign_cases": len(benign),
+            "scan_failures": sum(row["coverage_status"] == "failed" for row in rows),
+            "unsupported_cases": sum(row["coverage_status"] in ("unsupported", "partially_scanned") for row in rows),
+        },
+        "by_category": dict(categories),
+        "by_source_type": dict(source_types),
+        "malicious_layer_hits": {f"tier_{tier}": layer_hits[tier] for tier in range(1, 7)},
+        "cases": rows,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", type=Path, default=DEFAULT)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    try:
+        result = evaluate(args.dataset)
+    except (OSError, ValueError, TypeError, RecursionError, KeyError) as exc:
+        parser.exit(2, f"holdout evaluation failed: {exc}\n")
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"{result['dataset']} at threshold {result['threshold']}")
+        print(json.dumps(result["summary"], indent=2))
+        print("This is a frozen author-curated set, not independent validation.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

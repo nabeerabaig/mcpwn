@@ -31,7 +31,7 @@ def to_json(findings: list[Finding], extra: dict | None = None) -> str:
     return json.dumps(doc, indent=2, ensure_ascii=False)
 
 
-def to_sarif(findings: list[Finding]) -> str:
+def to_sarif(findings: list[Finding], extra: dict | None = None) -> str:
     rules, seen = [], set()
     for f in findings:
         if f.rule_id not in seen:
@@ -50,11 +50,23 @@ def to_sarif(findings: list[Finding]) -> str:
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": uri.replace("\\", "/")},
                                                 "region": {"startLine": 1}},
                            "logicalLocations": [{"name": loc_name or "unknown"}]}],
-            "properties": {"confidence": f.confidence, "tier": f.tier, "severity": f.severity},
+            "properties": {
+                "confidence": f.confidence, "tier": f.tier, "severity": f.severity,
+                "findingId": f.finding_id, "detectorVersion": f.detector_version,
+                "category": f.category, "impact": f.impact, "remediation": f.remediation,
+                "semanticStatus": f.semantic_status,
+                "dynamicValidationStatus": f.dynamic_validation_status,
+                "relatedFindingIds": f.related_finding_ids,
+            },
+            "partialFingerprints": {"mcpscanFindingId": f.finding_id},
         })
+    run = {"tool": {"driver": {"name": "mcpscan", "version": __version__, "rules": rules}},
+           "results": results}
+    if extra:
+        run["properties"] = extra
     return json.dumps({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "version": "2.1.0",
-        "runs": [{"tool": {"driver": {"name": "mcpscan", "version": __version__, "rules": rules}}, "results": results}],
+        "runs": [run],
     }, indent=2)
 
 
@@ -74,6 +86,13 @@ def to_text(findings: list[Finding], notes: list[str] | None = None) -> str:
         lines.append(f"[{icon[f.severity]}] {f.confidence:.2f}  {f.rule_id}  (tier {f.tier})")
         lines.append(f"       {f.title} - {where}")
         lines.append(f"       {f.message}")
+        lines.append(f"       category: {f.category}")
+        lines.append(f"       impact: {f.impact}")
+        lines.append(f"       recommended action: {f.remediation}")
+        lines.append(f"       semantic review: {f.semantic_status}")
+        lines.append(f"       dynamic validation: {f.dynamic_validation_status}")
+        if f.related_finding_ids:
+            lines.append(f"       related findings: {', '.join(f.related_finding_ids)}")
         if f.evidence:
             lines.append(f"       evidence: {f.evidence[:140]!r}")
         lines.append("")

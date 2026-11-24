@@ -4,10 +4,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'bench'))
 from detection_gate import compare
+import benchmark as benchmark_module
+from corpus import MALICIOUS, BENIGN
 
 
 class DetectionGateTests(unittest.TestCase):
@@ -44,6 +47,43 @@ class DetectionGateTests(unittest.TestCase):
         parsed = json.loads(result.stdout)
         self.assertEqual(parsed['summary']['malicious'], {'cases': 52, 'flagged': 48})
         self.assertEqual(len(parsed['known_mismatches']), 4)
+
+    def test_benchmark_json_reports_confusion_and_coverage_metrics(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "benchmark.json"
+            result = subprocess.run([sys.executable, str(ROOT / "bench/benchmark.py"),
+                                     "--json", str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            summary = report["summary"]
+            self.assertEqual(summary["true_positives"] + summary["false_negatives"], len(MALICIOUS))
+            self.assertEqual(summary["true_negatives"] + summary["false_positives"], len(BENIGN))
+            self.assertIn("precision", summary)
+            self.assertIn("recall", summary)
+            self.assertIn("f1", summary)
+            self.assertIn("scan_failures", summary)
+            self.assertIn("unsupported_cases", summary)
+            self.assertTrue(all("coverage_status" in row for row in report["malicious"] + report["benign"]))
+
+    def test_dynamic_benchmark_records_per_tool_validation_outcome(self):
+        sample = [("test", "sample", "Ordinary description.", {})]
+        stats = {"tool_verdicts": {"bench/test:sample": "confirmed"}}
+        with patch.object(benchmark_module.dynamic, "apply",
+                          return_value=([], [], stats)):
+            rows = benchmark_module.run(sample, True, 0.5)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["dynamic_validation_performed"])
+        self.assertEqual(rows[0]["dynamic_validation_status"], "confirmed")
+
+    def test_benchmark_rejects_invalid_threshold(self):
+        for threshold in ("-0.1", "1.1", "nan", "inf"):
+            with self.subTest(threshold=threshold):
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "bench/benchmark.py"), "--threshold", threshold],
+                    capture_output=True, text=True, timeout=10
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("threshold must be finite", result.stderr)
 
     def test_invalid_baseline_fails_with_exit_two(self):
         with tempfile.TemporaryDirectory() as folder:

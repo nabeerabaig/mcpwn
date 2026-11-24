@@ -144,29 +144,97 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
     return out
 
 
-def scan_param_names(schema: dict, *, tool: str, server: str, source: str = "") -> list[Finding]:
+def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source: str = "",
+                                  root_path: str = "inputSchema", max_depth: int = 32,
+                                  max_nodes: int = 20000, max_text_chars: int = 1_000_000,
+                                  budget: list[int] | None = None
+                                  ) -> tuple[list[Finding], str | None]:
+    """Scan instruction-like schema property names with explicit resource bounds."""
     out: list[Finding] = []
+    stack = [(schema, root_path, 0)]
+    seen = set()
+    if budget is None:
+        budget = [max_nodes, max_text_chars]
+    visited = 0
 
-    def walk(node, path):
-        if not isinstance(node, dict):
-            return
+    while stack:
+        node, path, depth = stack.pop()
+        if depth > max_depth:
+            return out, "maximum parameter-schema depth limit exceeded"
+        if not isinstance(node, dict) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        visited += 1
+        budget[0] -= 1
+        if visited > max_nodes or budget[0] < 0:
+            return out, "parameter-schema node count limit exceeded"
+
         props = node.get("properties")
         if isinstance(props, dict):
             for name, sub in props.items():
-                strong = bool(INSTRUCTION_PARAM.match(str(name)))
-                if strong or WEAK_INSTRUCTION_PARAM.match(str(name)):
+                visited += 1
+                budget[0] -= 1
+                if visited > max_nodes or budget[0] < 0:
+                    return out, "parameter-schema node count limit exceeded"
+                if not isinstance(name, str):
+                    continue
+                budget[1] -= len(name)
+                if budget[1] < 0:
+                    return out, "parameter-schema text size limit exceeded"
+                strong = bool(INSTRUCTION_PARAM.match(name))
+                if strong or WEAK_INSTRUCTION_PARAM.match(name):
                     out.append(Finding(
                         rule_id="T2-INSTRUCTION-PARAM", tier=2, title="Parameter looks like an instruction channel",
                         message=f"Parameter '{name}' resembles a covert instruction/side channel.",
                         confidence=0.6 if strong else 0.3, server=server, tool=tool, source=source,
-                        location=f"{path}.properties.{name}", evidence=str(name)))
-                walk(sub, f"{path}.properties.{name}")
-        for key in ("items", "additionalProperties"):
-            if isinstance(node.get(key), dict):
-                walk(node[key], f"{path}.{key}")
-        for key in ("anyOf", "oneOf", "allOf"):
-            for i, sub in enumerate(node.get(key) or []):
-                walk(sub, f"{path}.{key}[{i}]")
+                        location=f"{path}.properties.{name}", evidence=name))
+                if isinstance(sub, dict):
+                    stack.append((sub, f"{path}.properties.{name}", depth + 1))
 
-    walk(schema, "inputSchema")
-    return out
+        # Traverse the schema-bearing keywords across common JSON Schema drafts.
+        for key in ("items", "additionalProperties", "not", "if", "then", "else",
+                    "contains", "propertyNames"):
+            child = node.get(key)
+            if isinstance(child, dict):
+                visited += 1
+                budget[0] -= 1
+                if visited > max_nodes or budget[0] < 0:
+                    return out, "parameter-schema node count limit exceeded"
+                stack.append((child, f"{path}.{key}", depth + 1))
+
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            children = node.get(key)
+            if isinstance(children, list):
+                for index, child in enumerate(children):
+                    visited += 1
+                    budget[0] -= 1
+                    if visited > max_nodes or budget[0] < 0:
+                        return out, "parameter-schema node count limit exceeded"
+                    if isinstance(child, dict):
+                        stack.append((child, f"{path}.{key}[{index}]", depth + 1))
+
+        for key in ("$defs", "definitions", "patternProperties", "dependentSchemas"):
+            definitions = node.get(key)
+            if isinstance(definitions, dict):
+                for definition_name, child in definitions.items():
+                    visited += 1
+                    budget[0] -= 1
+                    if visited > max_nodes or budget[0] < 0:
+                        return out, "parameter-schema node count limit exceeded"
+                    if isinstance(definition_name, str):
+                        budget[1] -= len(definition_name)
+                        if budget[1] < 0:
+                            return out, "parameter-schema text size limit exceeded"
+                    if isinstance(child, dict):
+                        stack.append((child, f"{path}.{key}.{definition_name}", depth + 1))
+
+    return out, None
+
+
+def scan_param_names(schema: dict, *, tool: str, server: str, source: str = "",
+                     root_path: str = "inputSchema") -> list[Finding]:
+    """Backward-compatible findings-only wrapper around bounded schema-name scanning."""
+    findings, _status = scan_param_names_with_status(
+        schema, tool=tool, server=server, source=source, root_path=root_path
+    )
+    return findings

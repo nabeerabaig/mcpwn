@@ -2,7 +2,7 @@
 
 A standalone CLI and Claude Code plugin that scan MCP servers and agent instruction files for prompt injection. The core scanner uses the Python standard library; YAML config discovery uses optional PyYAML.
 
-Status: **v0.2.0.**
+Status: **v0.3 security upgrade in development (unreleased).**
 
 ## Install locally
 
@@ -22,11 +22,25 @@ claude --plugin-dir /path/to/mcp-injection-scanner
 
 A `SessionStart` hook runs a quiet static repo scan and only speaks up if it finds warning-level or worse issues. The `injection-triage` skill tells Claude how to judge findings and to treat scanned text as untrusted data.
 
+## Scan coverage and boundaries
+
+The scan emits per-source coverage records in JSON output. Each record tracks discovered and scanned text fields, skipped or unsupported values, scan status, semantic-review outcome, and whether dynamic validation actually tested the source. Text output includes a compact coverage summary.
+
+For tool definitions, the scanner inspects names, descriptions, input schemas, output schemas, annotations, `_meta`, metadata values, and string-valued metadata keys preserved from the server response. General metadata traversal and schema parameter-name analysis have explicit depth, node-count, and text-size limits. Values that are not text are recorded as not applicable rather than being counted as successfully scanned. Unsupported values and exceeded limits are reported.
+
+Text is analyzed in its original form and, when NFKC changes it, in a normalized analysis representation as well. The original source remains the evidence shown in findings. Suspicious format, surrogate, and private-use Unicode characters are separately recorded with their code points and source locations; normalization does not silently delete them.
+
+For live servers, the collector requests `tools/list` and, where the server advertises the relevant capabilities, `prompts/list`, `resources/list`, and `resources/templates/list`. Prompt descriptions and argument metadata, resource descriptors, and resource-template descriptors are scanned. If a server does not advertise a capability, a method is unsupported, collection fails, or an offline tool-only snapshot omits the surface, the coverage record states that explicitly.
+
+**Important protocol boundary:** scans do not invoke prompts, retrieve prompt messages or argument values, call `resources/read`, or fetch resource contents. They analyze descriptors only. A successful descriptor scan is not a complete audit of the behavior or content behind a server.
+
+The optional Tier 3 reviewer receives the preserved tool metadata, but remains advisory. A missing backend, invalid response, timeout, or inconclusive response is not counted as a completed semantic review.
+
 ## Detection tiers
 
 1. **Tier 1, structural:** zero-width / bidi / tag Unicode (tag characters are decoded), base64 payloads (decoded and re-scanned), override and concealment phrases.
 2. **Tier 2, contextual:** sensitive paths, secrets, exfiltration and execution phrasing. Only *directive* language aimed at the agent scores high; descriptive text ("Reads a file") and same-server dependency docs ("call list_files first") stay below warning. Instruction-like parameter names.
-3. **Tier 3, LLM (opt-in, `--llm`):** `MCPSCAN_LLM_CMD` (stdin JSON, stdout JSON) or `ANTHROPIC_API_KEY` (+ optional `MCPSCAN_LLM_MODEL`). Can lower Tier 2 findings it judges benign; can never clear Tier 1 hits.
+3. **Tier 3, LLM (opt-in, `--llm`):** `MCPSCAN_LLM_CMD` (stdin JSON, stdout JSON) or `ANTHROPIC_API_KEY` (+ optional `MCPSCAN_LLM_MODEL`). Reviews serialized tool and supported protocol-descriptor metadata. It is advisory, may lower Tier 2 confidence when it returns a valid benign verdict, and never clears Tier 1 findings. Inconclusive or unavailable review is reported rather than counted as a benign result.
 
 Severity: confidence >= 0.8 critical, >= 0.5 warning, otherwise info.
 
@@ -126,9 +140,9 @@ Use `scan --strict` or `drift --strict` to exit `2` on incomplete collection or 
 
 - `confirmed`: behavior deviates only with the real description. Adds `D-CONFIRMED` (0.98).
 - `cleared`: no deviation. Findings are *demoted* (critical becomes warning; lower ones x0.6) but not erased, because a model ignoring an injection does not prove other agents will. Tier 1 hits (hidden characters, base64) are never demoted.
-- `inconclusive`: the model returned nothing parseable.
+- `inconclusive`: either the real-description or control trial failed to return a valid structured response. A failed control can never be treated as evidence that the description caused the behavior.
 
-Backends: `MCPSCAN_AGENT_CMD`, `MCPSCAN_OLLAMA_MODEL` (local, Ollama), or `ANTHROPIC_API_KEY`. With none set, the step is skipped and says so. `--sandbox docker` launches scanned servers in a locked-down container (`--network none`, read-only, caps dropped); servers that need the network to start (e.g. `npx`) need `--sandbox-network bridge` or a prebuilt image.
+Backends: `MCPSCAN_AGENT_CMD`, `MCPSCAN_OLLAMA_MODEL` (local, Ollama), or `ANTHROPIC_API_KEY`. The command backend may be a deterministic mock; the reported backend name does not prove that a real LLM was tested. With none set, the step is skipped and says so. `--sandbox docker` launches scanned servers in a locked-down container (`--network none`, read-only, caps dropped); servers that need the network to start (e.g. `npx`) need `--sandbox-network bridge` or a prebuilt image.
 
 ## Benchmark (`python3 bench/benchmark.py`)
 
@@ -141,6 +155,12 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 | Misses | 1 schema (`system_prompt` param, deliberately ambiguous) and 3 semantic paraphrases |
 
 **Read this carefully:** this is *not* the AppSecSanta/Cisco audit set, which I did not have, so the "<10% FP vs 78%" comparison has not been made. The detectors were also iterated while looking at this corpus, so the numbers are optimistic. Treat them as a regression baseline, not evidence of real-world accuracy. No real LLM was run for Tier 3 or dynamic mode; dynamic mode is tested only with a deterministic mock agent.
+
+The benchmark JSON now includes TP/FP/TN/FN, precision, recall, F1, per-tier contributions, and scan-coverage counts. These metrics describe only the included corpus and are not calibrated probabilities. The current development corpus is tool-definition-only, so it does not measure prompt/resource descriptor coverage.
+
+A separate frozen, 12-case author-curated evaluation set is in [holdout-v1.json](bench/holdout-v1.json). Run `python3 bench/evaluate_holdout.py --json` to report its results. It is kept separate from the development corpus and is not used to tune detector rules. It is not independently sourced or independently validated, so it must not be presented as proof of real-world accuracy. Keep it frozen; create a new version for future cases rather than silently changing its labels or examples. Its initial threshold-0.5 result is **3/6 malicious detected, 1/6 benign flagged, precision 75%, recall 50%, F1 60%**. This small result is useful for exposing gaps, not for claiming accuracy; do not tune against this frozen set.
+
+For a reproducible before/after comparison, the `Baseline versus security upgrade` GitHub Actions workflow runs the unit/integration suite and static benchmark against both unchanged `main` and this branch. It derives confusion-matrix metrics from the legacy main benchmark format so the results are comparable.
 
 See the [offline benign-tool pilot](bench/benign_pilot.md) for a separate five-tool smoke test and reproducible CLI command.
 

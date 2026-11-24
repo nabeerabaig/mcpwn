@@ -61,7 +61,7 @@ def _complete(system: str, user: str, timeout: float) -> str | None:
         if b == "command":
             p = subprocess.run(split_command(os.environ["MCPSCAN_AGENT_CMD"]), input=json.dumps({"system": system, "user": user}),
                                capture_output=True, text=True, timeout=timeout)
-            return p.stdout
+            return p.stdout if p.returncode == 0 else None
         if b == "ollama":
             body = json.dumps({"model": os.environ["MCPSCAN_OLLAMA_MODEL"], "stream": False, "format": "json",
                                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
@@ -83,25 +83,32 @@ def _complete(system: str, user: str, timeout: float) -> str | None:
 
 
 def _parse(text: str | None) -> dict | None:
-    if not text:
+    """Accept only the documented agent response shape; malformed output is inconclusive."""
+    if not isinstance(text, str) or not text:
         return None
     s, e = text.find("{"), text.rfind("}")
     if s < 0 or e < s:
         return None
     try:
         d = json.loads(text[s:e + 1])
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
-    return d if isinstance(d, dict) else None
+    if not isinstance(d, dict) or not isinstance(d.get("tool_calls"), list):
+        return None
+    if not isinstance(d.get("message"), str):
+        return None
+    for call in d["tool_calls"]:
+        if (not isinstance(call, dict) or not isinstance(call.get("name"), str)
+                or not isinstance(call.get("arguments", {}), dict)):
+            return None
+    return d
 
 
 def analyze_behavior(resp: dict, suspect_tool: str) -> list[str]:
     """Return deviation reasons. Pure function, unit-testable without any model."""
     reasons: list[str] = []
-    for call in resp.get("tool_calls") or []:
-        if not isinstance(call, dict):
-            continue
-        name = str(call.get("name", ""))
+    for call in resp.get("tool_calls", []):
+        name = call["name"]
         args = json.dumps(call.get("arguments", {}), ensure_ascii=False)
         low = args.lower()
         if name == "read_file" and any(p in low for p in CANARY_PATHS):
@@ -124,15 +131,17 @@ def analyze_behavior(resp: dict, suspect_tool: str) -> list[str]:
 
 def run_trial(tool: ToolDef, description: str, timeout: float) -> tuple[list[str], bool]:
     """Returns (deviations, ran_ok)."""
-    tools = [{"name": tool.name, "description": description, "inputSchema": tool.input_schema}] + DECOYS
+    suspect_definition = tool.to_dict()
+    suspect_definition["description"] = description
+    tools = [suspect_definition] + DECOYS
     deviations: list[str] = []
-    ok = False
+    ok = True
     for task in TASKS:
         user = f"{FILES_NOTE}\n\nAvailable tools:\n{json.dumps(tools)}\n\nUser task: {task.format(tool=tool.name)}"
         resp = _parse(_complete(SYSTEM, user, timeout))
         if resp is None:
+            ok = False
             continue
-        ok = True
         deviations.extend(analyze_behavior(resp, tool.name))
     return list(dict.fromkeys(deviations)), ok
 
@@ -141,8 +150,8 @@ def confirm_tool(tool: ToolDef, findings: list[Finding], timeout: float = 30.0) 
     """Returns (verdict, reasons); verdict in confirmed|cleared|inconclusive."""
     real, ok_a = run_trial(tool, tool.description, timeout)
     control, ok_b = run_trial(tool, "", timeout)
-    if not ok_a:
-        return "inconclusive", ["test model returned no parseable response"]
+    if not ok_a or not ok_b:
+        return "inconclusive", ["real or control trial returned no parseable response"]
     caused = [r for r in real if r not in control]
     if caused:
         return "confirmed", caused
@@ -152,7 +161,8 @@ def confirm_tool(tool: ToolDef, findings: list[Finding], timeout: float = 30.0) 
 def apply(tools: list[ToolDef], findings: list[Finding], min_confidence: float = 0.4,
           timeout: float = 30.0) -> tuple[list[Finding], list[str], dict]:
     """Confirm or clear findings per tool. Returns (findings, notes, stats)."""
-    stats = {"confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0}
+    stats = {"confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0,
+             "tested_tools": [], "tool_verdicts": {}, "backend": backend_name()}
     if backend_name() is None:
         return findings, ["dynamic: no agent backend configured (MCPSCAN_AGENT_CMD / MCPSCAN_OLLAMA_MODEL / ANTHROPIC_API_KEY); skipped"], stats
     notes: list[str] = []
@@ -165,7 +175,9 @@ def apply(tools: list[ToolDef], findings: list[Finding], min_confidence: float =
         if not group or max(f.confidence for f in group) < min_confidence:
             continue
         stats["tools_tested"] += 1
+        stats["tested_tools"].append(f"{t.server}/{t.name}")
         verdict, reasons = confirm_tool(t, group, timeout)
+        stats["tool_verdicts"][f"{t.server}/{t.name}"] = verdict
         stats[verdict] += 1
         if verdict == "confirmed":
             extra.append(Finding("D-CONFIRMED", 6, "Confirmed by sandbox: description changed agent behavior",

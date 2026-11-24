@@ -1,0 +1,138 @@
+name: Baseline versus security upgrade
+
+on:
+  push:
+    branches: [v0.3-security-upgrade]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout unchanged main baseline commit
+        uses: actions/checkout@v4
+        with:
+          ref: ef195dfd00627cf29e7ad17e3f11f5c97dca3c67
+          path: baseline
+      - name: Checkout upgrade branch
+        uses: actions/checkout@v4
+        with:
+          ref: v0.3-security-upgrade
+          path: candidate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install optional config parser used by tests
+        run: python -m pip install PyYAML
+      - name: Baseline unit and integration tests
+        id: baseline-tests
+        continue-on-error: true
+        working-directory: baseline
+        run: python -m unittest discover -v -s tests
+      - name: Baseline static benchmark
+        id: baseline-benchmark
+        continue-on-error: true
+        working-directory: baseline
+        run: python bench/benchmark.py --json baseline-benchmark.json
+      - name: Upgrade unit and integration tests
+        id: candidate-tests
+        continue-on-error: true
+        working-directory: candidate
+        run: python -m unittest discover -v -s tests
+      - name: Upgrade static benchmark
+        id: candidate-benchmark
+        continue-on-error: true
+        working-directory: candidate
+        run: python bench/benchmark.py --json candidate-benchmark.json
+      - name: Upgrade frozen holdout evaluation
+        id: candidate-holdout
+        continue-on-error: true
+        working-directory: candidate
+        run: python bench/evaluate_holdout.py --json > holdout-v1-report.json
+      - name: Compare results
+        if: always()
+        env:
+          BASELINE_TESTS: ${{ steps.baseline-tests.outcome }}
+          BASELINE_BENCHMARK: ${{ steps.baseline-benchmark.outcome }}
+          CANDIDATE_TESTS: ${{ steps.candidate-tests.outcome }}
+          CANDIDATE_BENCHMARK: ${{ steps.candidate-benchmark.outcome }}
+          CANDIDATE_HOLDOUT: ${{ steps.candidate-holdout.outcome }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          outcomes = {
+              "main_tests": os.environ["BASELINE_TESTS"],
+              "main_benchmark": os.environ["BASELINE_BENCHMARK"],
+              "upgrade_tests": os.environ["CANDIDATE_TESTS"],
+              "upgrade_benchmark": os.environ["CANDIDATE_BENCHMARK"],
+              "upgrade_holdout": os.environ["CANDIDATE_HOLDOUT"],
+          }
+          print("Execution outcomes:")
+          print(json.dumps(outcomes, indent=2))
+          reports = {}
+          for label, path in (
+              ("main", Path("baseline/baseline-benchmark.json")),
+              ("upgrade", Path("candidate/candidate-benchmark.json")),
+          ):
+              if not path.exists():
+                  print(f"{label} benchmark report missing")
+                  continue
+              report = json.loads(path.read_text(encoding="utf-8"))
+              summary = report.get("summary")
+              if not isinstance(summary, dict):
+                  # The unchanged main benchmark predates the summary object. Derive
+                  # identical confusion-matrix metrics from its per-case records.
+                  malicious = report.get("malicious", [])
+                  benign = report.get("benign", [])
+                  tp = sum(bool(row.get("flagged")) for row in malicious)
+                  fp = sum(bool(row.get("flagged")) for row in benign)
+                  fn, tn = len(malicious) - tp, len(benign) - fp
+                  precision = tp / (tp + fp) if tp + fp else None
+                  recall = tp / (tp + fn) if tp + fn else 0.0
+                  f1 = (2 * precision * recall / (precision + recall)
+                        if precision is not None and precision + recall else 0.0)
+                  summary = {
+                      "true_positives": tp, "false_positives": fp,
+                      "true_negatives": tn, "false_negatives": fn,
+                      "precision": precision, "recall": recall, "f1": f1,
+                      "malicious_cases": len(malicious), "benign_cases": len(benign),
+                      "coverage_metrics": "not available in legacy main benchmark",
+                  }
+              reports[label] = summary
+              print(f"{label} benchmark:")
+              print(json.dumps(summary, indent=2))
+          holdout_path = Path("candidate/holdout-v1-report.json")
+          if holdout_path.exists():
+              holdout = json.loads(holdout_path.read_text(encoding="utf-8"))
+              print("Frozen author-curated holdout v1:")
+              print(json.dumps(holdout.get("summary", {}), indent=2))
+          else:
+              print("Frozen holdout report missing")
+          if "main" in reports and "upgrade" in reports:
+              print("Upgrade minus main:")
+              print(json.dumps({
+                  key: reports["upgrade"].get(key, 0) - reports["main"].get(key, 0)
+                  for key in ("true_positives", "false_positives", "true_negatives",
+                              "false_negatives", "recall", "precision", "f1")
+                  if isinstance(reports["upgrade"].get(key), (int, float))
+                  and isinstance(reports["main"].get(key), (int, float))
+              }, indent=2))
+          if any(value != "success" for value in outcomes.values()):
+              raise SystemExit("Baseline comparison failed; inspect the individual test and benchmark logs.")
+          PY
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-vs-upgrade-benchmarks
+          path: |
+            baseline/baseline-benchmark.json
+            candidate/candidate-benchmark.json
+            candidate/holdout-v1-report.json
+          if-no-files-found: warn

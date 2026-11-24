@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,34 @@ class AnalyzeBehaviorTests(unittest.TestCase):
 
     def test_leak_in_message(self):
         self.assertTrue(dynamic.analyze_behavior({"tool_calls": [], "message": f"key is {dynamic.CANARY}"}, "t"))
+
+
+class DynamicResponseValidationTests(unittest.TestCase):
+    def test_parse_rejects_malformed_agent_response_shapes(self):
+        malformed = [
+            '{"tool_calls": "not a list", "message": "ok"}',
+            '{"tool_calls": [{"name": 7, "arguments": {}}], "message": "ok"}',
+            '{"tool_calls": [{"name": "read_file", "arguments": []}], "message": "ok"}',
+            '{"tool_calls": [], "message": 7}',
+        ]
+        for response in malformed:
+            with self.subTest(response=response):
+                self.assertIsNone(dynamic._parse(response))
+
+    def test_control_failure_makes_dynamic_result_inconclusive(self):
+        t = tool("search", "Searches records.")
+        with patch.object(dynamic, "run_trial",
+                          side_effect=[(["made an outbound request"], True), ([], False)]):
+            verdict, reasons = dynamic.confirm_tool(t, [])
+        self.assertEqual(verdict, "inconclusive")
+        self.assertTrue(any("control trial" in reason for reason in reasons))
+
+    def test_partial_task_responses_make_a_trial_inconclusive(self):
+        t = tool("search", "Searches records.")
+        valid = '{"tool_calls": [], "message": "ok"}'
+        with patch.object(dynamic, "_complete", side_effect=[valid, None]):
+            _deviations, ok = dynamic.run_trial(t, t.description, timeout=1)
+        self.assertFalse(ok)
 
 
 class DynamicWithMockAgent(unittest.TestCase):
