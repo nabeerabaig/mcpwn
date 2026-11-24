@@ -86,8 +86,13 @@ def _tool_content(tool: ToolDef):
         fields.append(("_meta", tool.meta))
     if tool.extra:
         fields.append(("additionalMetadata", tool.extra))
+    # One shared budget covers the entire tool definition, not each root field separately.
+    budget = [MAX_CONTENT_NODES, MAX_TEXT_CHARS, None]
     for root, value in fields:
-        yield from _walk_text(value, root)
+        if budget[2] is not None:
+            yield (root, None, budget[2])
+            return
+        yield from _walk_text(value, root, budget=budget)
 
 
 def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None,
