@@ -17,6 +17,48 @@ def severity_for(confidence: float) -> str:
     return "info"
 
 
+def finding_category(rule_id: str, tier: int) -> str:
+    rule = rule_id.upper()
+    if rule.startswith("T1-"):
+        return "structural"
+    if rule.startswith("T2-"):
+        return "contextual"
+    if rule.startswith("T3-"):
+        return "semantic"
+    if rule.startswith("D-"):
+        return "dynamic"
+    if rule.startswith("T4-"):
+        return "runtime_and_drift"
+    if rule.startswith("T5-"):
+        return "agent_instruction_files"
+    return {1: "structural", 2: "contextual", 3: "semantic", 4: "runtime_and_drift",
+            5: "agent_instruction_files", 6: "dynamic"}.get(tier, "other")
+
+
+def finding_guidance(rule_id: str, tier: int) -> tuple[str, str]:
+    rule = rule_id.upper()
+    if any(token in rule for token in ("EXFIL", "FORWARDING", "EGRESS")):
+        return ("May disclose user, conversation, credential, or tool data to an external destination.",
+                "Verify the destination and data flow independently; remove any unjustified transfer or require explicit approval.")
+    if any(token in rule for token in ("SENSITIVE", "SECRET", "CREDENTIAL")):
+        return ("May expose credentials or other sensitive local data.",
+                "Confirm that access is required for the documented task; remove unrelated credential access and secret forwarding.")
+    if any(token in rule for token in ("EXEC", "SHELL", "COMMAND")):
+        return ("May cause unapproved code or command execution.",
+                "Remove untrusted execution directives; require reviewed commands and explicit user authorization.")
+    if any(token in rule for token in ("OVERRIDE", "CONCEAL", "TRUST", "ROLE", "INSTRUCTION")):
+        return ("May alter agent instruction handling or conceal actions from the user.",
+                "Treat the text as untrusted data; remove instruction-hierarchy overrides and concealment requests.")
+    if any(token in rule for token in ("UNICODE", "BASE64")):
+        return ("Encoded or invisible content may obscure instructions or change how text is interpreted.",
+                "Inspect the original content and decoded representation; remove unexplained hidden or encoded text.")
+    if tier == 6 or rule.startswith("D-"):
+        return ("A simulated agent exhibited behavior associated with the scanned tool description.",
+                "Inspect the paired trial traces and tool description; disable or revise the suspect instruction pending review.")
+    return ("The finding may influence agent behavior or tool-use decisions.",
+            "Review the cited source and surrounding context; keep only instructions necessary for the documented tool behavior.")
+
+
 @dataclass
 class Finding:
     rule_id: str
@@ -32,17 +74,31 @@ class Finding:
     severity: str = ""
     finding_id: str = ""
     detector_version: str = DETECTOR_VERSION
+    category: str = ""
+    impact: str = ""
+    remediation: str = ""
+    semantic_status: str = "not_assessed"
+    dynamic_validation_status: str = "not_requested"
+    related_finding_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.confidence = round(max(0.0, min(1.0, float(self.confidence))), 2)
         if not self.severity:
             self.severity = severity_for(self.confidence)
         if not self.finding_id:
-            identity = "\\x1f".join((
+            identity = "\x1f".join((
                 self.detector_version, self.rule_id, self.server, self.tool,
                 self.source, self.location,
             ))
             self.finding_id = sha256(identity.encode("utf-8", "replace")).hexdigest()[:24]
+        if not self.category:
+            self.category = finding_category(self.rule_id, self.tier)
+        if not self.impact or not self.remediation:
+            inferred_impact, inferred_remediation = finding_guidance(self.rule_id, self.tier)
+            if not self.impact:
+                self.impact = inferred_impact
+            if not self.remediation:
+                self.remediation = inferred_remediation
 
     def rescore(self, confidence: float) -> None:
         self.confidence = round(max(0.0, min(1.0, confidence)), 2)
