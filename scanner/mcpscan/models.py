@@ -88,7 +88,7 @@ class Finding:
         if not self.finding_id:
             identity = "\x1f".join((
                 self.detector_version, self.rule_id, self.server, self.tool,
-                self.source, self.location,
+                self.source, self.location, self.evidence[:200],
             ))
             self.finding_id = sha256(identity.encode("utf-8", "replace")).hexdigest()[:24]
         if not self.category:
