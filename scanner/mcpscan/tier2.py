@@ -146,14 +146,16 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
 
 def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source: str = "",
                                   root_path: str = "inputSchema", max_depth: int = 32,
-                                  max_nodes: int = 20000, max_text_chars: int = 1_000_000
+                                  max_nodes: int = 20000, max_text_chars: int = 1_000_000,
+                                  budget: list[int] | None = None
                                   ) -> tuple[list[Finding], str | None]:
     """Scan instruction-like schema property names with explicit resource bounds."""
     out: list[Finding] = []
     stack = [(schema, root_path, 0)]
     seen = set()
+    if budget is None:
+        budget = [max_nodes, max_text_chars]
     visited = 0
-    text_chars = 0
 
     while stack:
         node, path, depth = stack.pop()
@@ -163,19 +165,21 @@ def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source
             continue
         seen.add(id(node))
         visited += 1
-        if visited > max_nodes:
+        budget[0] -= 1
+        if visited > max_nodes or budget[0] < 0:
             return out, "parameter-schema node count limit exceeded"
 
         props = node.get("properties")
         if isinstance(props, dict):
             for name, sub in props.items():
                 visited += 1
-                if visited > max_nodes:
+                budget[0] -= 1
+                if visited > max_nodes or budget[0] < 0:
                     return out, "parameter-schema node count limit exceeded"
                 if not isinstance(name, str):
                     continue
-                text_chars += len(name)
-                if text_chars > max_text_chars:
+                budget[1] -= len(name)
+                if budget[1] < 0:
                     return out, "parameter-schema text size limit exceeded"
                 strong = bool(INSTRUCTION_PARAM.match(name))
                 if strong or WEAK_INSTRUCTION_PARAM.match(name):
@@ -212,11 +216,12 @@ def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source
             if isinstance(definitions, dict):
                 for definition_name, child in definitions.items():
                     visited += 1
-                    if visited > max_nodes:
+                    budget[0] -= 1
+                    if visited > max_nodes or budget[0] < 0:
                         return out, "parameter-schema node count limit exceeded"
                     if isinstance(definition_name, str):
-                        text_chars += len(definition_name)
-                        if text_chars > max_text_chars:
+                        budget[1] -= len(definition_name)
+                        if budget[1] < 0:
                             return out, "parameter-schema text size limit exceeded"
                     if isinstance(child, dict):
                         stack.append((child, f"{path}.{key}.{definition_name}", depth + 1))
