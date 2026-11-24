@@ -121,7 +121,7 @@ def emit(findings: list[Finding], fmt: str, notes: list[str], output: str | None
     if redact_evidence:
         findings = report.without_evidence(findings)
         notes = []
-    text = {"json": lambda: report.to_json(findings, extra), "sarif": lambda: report.to_sarif(findings),
+    text = {"json": lambda: report.to_json(findings, extra), "sarif": lambda: report.to_sarif(findings, extra),
             "text": lambda: report.to_text(findings, notes)}[fmt]()
     if output:
         Path(output).write_text(text, encoding="utf-8")
