@@ -110,7 +110,7 @@ def classify(tool: ToolDef, timeout: float = 30.0) -> dict | None:
 
 
 def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Finding], str]:
-    """Return (additional findings, whether a valid semantic verdict was received)."""
+    """Return (additional findings, the semantic review outcome)."""
     verdict = classify(tool)
     # Keep this boundary defensive even if classify is replaced by an integration or test double.
     if (not isinstance(verdict, dict) or type(verdict.get("injection")) is not bool
@@ -121,9 +121,9 @@ def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Find
     try:
         conf = float(verdict["confidence"])
     except (OverflowError, ValueError):
-        return [], False
+        return [], "inconclusive"
     if not math.isfinite(conf) or not 0.0 <= conf <= 1.0:
-        return [], False
+        return [], "inconclusive"
     reason = verdict["reason"][:300]
     if verdict["injection"]:
         for finding in findings:
@@ -131,12 +131,12 @@ def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Find
                 finding.rescore(max(finding.confidence, 0.6) + 0.2 * conf)
         return [Finding(rule_id="T3-LLM-CONFIRMED", tier=3, title="LLM semantic analysis flags manipulation",
                         message=reason, confidence=0.5 + 0.5 * conf, server=tool.server, tool=tool.name,
-                        source=tool.source)], True
+                        source=tool.source)], "flagged"
     if conf >= 0.7:
         for finding in findings:
             if finding.tier == 2:  # tier 1 structural hits (hidden unicode etc.) are never auto-cleared
                 finding.rescore(finding.confidence * 0.4)
-    return [], True
+    return [], "benign"
 
 
 def apply(tool: ToolDef, findings: list[Finding]) -> list[Finding]:
