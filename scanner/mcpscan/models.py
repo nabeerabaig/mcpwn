@@ -52,6 +52,23 @@ class Finding:
         return asdict(self)
 
 
+def validate_tool_raw(raw: Any) -> str | None:
+    """Validate untrusted tool metadata before coercion or scanning."""
+    if not isinstance(raw, dict):
+        return "tool definition must be an object"
+    if not isinstance(raw.get("name"), str) or not raw["name"].strip():
+        return "tool name must be a nonempty string"
+    if "description" in raw and not isinstance(raw["description"], str):
+        return "tool description must be a string"
+    for key in ("inputSchema", "input_schema", "outputSchema", "output_schema"):
+        if key in raw and not isinstance(raw[key], dict):
+            return f"{key} must be an object"
+    for key in ("annotations", "_meta"):
+        if key in raw and not isinstance(raw[key], dict):
+            return f"{key} must be an object"
+    return None
+
+
 @dataclass
 class ToolDef:
     server: str
