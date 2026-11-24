@@ -275,6 +275,7 @@ def _descriptor_issues(surface_name: str, item: dict) -> list[dict]:
         if not isinstance(arguments, list):
             issues.append({"location": "arguments", "reason": "prompt arguments must be an array"})
         else:
+            seen_argument_names = set()
             for index, argument in enumerate(arguments):
                 prefix = f"arguments[{index}]"
                 if not isinstance(argument, dict):
@@ -282,6 +283,10 @@ def _descriptor_issues(surface_name: str, item: dict) -> list[dict]:
                     continue
                 if not isinstance(argument.get("name"), str) or not argument["name"].strip():
                     issues.append({"location": f"{prefix}.name", "reason": "prompt argument name must be a nonempty string"})
+                else:
+                    if argument["name"] in seen_argument_names:
+                        issues.append({"location": f"{prefix}.name", "reason": "duplicate prompt argument name"})
+                    seen_argument_names.add(argument["name"])
                 if ("description" in argument and argument["description"] is not None
                         and not isinstance(argument["description"], str)):
                     issues.append({"location": f"{prefix}.description",
