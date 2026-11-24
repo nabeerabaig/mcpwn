@@ -16,6 +16,7 @@ MAX_TOOL_PAGES = 50
 MAX_TOOL_COUNT = 10_000
 MAX_RPC_LINE_CHARS = 2_000_000
 MAX_HTTP_BODY_BYTES = 2_000_000
+MAX_PENDING_MESSAGES = 1_000
 
 
 class McpError(Exception):
@@ -39,7 +40,7 @@ class StdioSession:
             )
         except (OSError, ValueError) as e:
             raise McpError(f"cannot start server: {e}") from e
-        self._q: queue.Queue = queue.Queue()
+        self._q: queue.Queue = queue.Queue(maxsize=MAX_PENDING_MESSAGES)
         self._id = 0
         self._reader_thread = threading.Thread(target=self._reader, daemon=True)
         self._reader_thread.start()
@@ -236,7 +237,7 @@ def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
     return msg if isinstance(msg, dict) and msg.get("id") == rid else None
 
 
-def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0) -> tuple[list[ToolDef], list[dict]]:
+def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0, *, include_surfaces: bool = True) -> tuple[list[ToolDef], list[dict]]:
     import urllib.error
     import urllib.request
     session_id = None
