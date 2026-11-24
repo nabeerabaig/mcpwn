@@ -242,6 +242,120 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
 
 
 
+def scan_protocol_surfaces(surfaces: list[dict], use_llm: bool = False
+                          ) -> tuple[list[Finding], list[dict]]:
+    """Scan prompt/resource descriptors returned by MCP list methods; never fetch bodies."""
+    findings: list[Finding] = []
+    coverage: list[dict] = []
+    surface_types = {
+        "prompts": ("mcp_prompt", "prompt_definition"),
+        "resources": ("mcp_resource", "resource_descriptor"),
+        "resource_templates": ("mcp_resource_template", "resource_template"),
+    }
+    for surface in surfaces:
+        surface_name = surface.get("surface", "")
+        source_type, content_type = surface_types.get(
+            surface_name, ("mcp_protocol_metadata", "protocol_metadata")
+        )
+        server = surface.get("server", "")
+        source = surface.get("source", "")
+        status = surface.get("status", "failed")
+        items = surface.get("items", [])
+        if status != "scanned":
+            mapped_status = {
+                "not_advertised": "not_applicable",
+                "unsupported": "unsupported",
+                "failed": "failed",
+            }.get(status, "failed")
+            coverage.append({
+                "source_type": source_type,
+                "source_id": server,
+                "content_type": content_type,
+                "status": mapped_status,
+                "fields_discovered": 0,
+                "fields_scanned": 0,
+                "fields_skipped": [{"location": surface_name, "reason": surface.get("reason", status)}],
+                "unsupported_fields": ([{"location": surface_name, "reason": surface.get("reason", status)}]
+                                       if mapped_status == "unsupported" else []),
+                "scan_errors": [surface.get("reason", status)] if mapped_status == "failed" else [],
+                "semantic_analysis_applied": False,
+                "semantic_review_status": "not_requested",
+                "dynamic_validation_performed": False,
+                "dynamic_validation_status": "not_requested",
+            })
+            continue
+        if not isinstance(items, list) or not items:
+            coverage.append({
+                "source_type": source_type, "source_id": server,
+                "content_type": content_type, "status": "fully_scanned",
+                "fields_discovered": 0, "fields_scanned": 0,
+                "fields_skipped": [], "unsupported_fields": [], "scan_errors": [],
+                "semantic_analysis_applied": False,
+                "semantic_review_status": "not_requested",
+                "dynamic_validation_performed": False,
+                "dynamic_validation_status": "not_requested",
+            })
+            continue
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                coverage.append({
+                    "source_type": source_type, "source_id": f"{server}/{surface_name}/{index + 1}",
+                    "content_type": content_type, "status": "unsupported",
+                    "fields_discovered": 0, "fields_scanned": 0,
+                    "fields_skipped": [{"location": surface_name, "reason": "descriptor is not an object"}],
+                    "unsupported_fields": [{"location": surface_name, "reason": "descriptor is not an object"}],
+                    "scan_errors": [], "semantic_analysis_applied": False,
+                    "semantic_review_status": "not_requested",
+                    "dynamic_validation_performed": False,
+                    "dynamic_validation_status": "not_requested",
+                })
+                continue
+            if surface_name == "prompts":
+                label = item.get("name") or f"prompt-{index + 1}"
+                arguments = item.get("arguments", [])
+                properties = {}
+                malformed_arguments = []
+                if isinstance(arguments, list):
+                    for arg_index, argument in enumerate(arguments):
+                        if not isinstance(argument, dict) or not isinstance(argument.get("name"), str):
+                            malformed_arguments.append({
+                                "location": f"arguments[{arg_index}]",
+                                "reason": "prompt argument metadata must contain a string name",
+                            })
+                            continue
+                        properties[argument["name"]] = {
+                            "type": "string",
+                            "description": argument.get("description", ""),
+                        }
+                else:
+                    malformed_arguments.append({
+                        "location": "arguments",
+                        "reason": "prompt arguments must be an array",
+                    })
+                schema = {"type": "object", "properties": properties}
+                tool = ToolDef(server, f"prompt:{label}", str(item.get("description") or ""),
+                               schema, source, extra={"promptMetadata": item})
+            elif surface_name == "resources":
+                label = f"resource-{index + 1}"
+                tool = ToolDef(server, label, str(item.get("description") or ""),
+                               {}, source, extra={"resourceMetadata": item})
+            else:
+                label = f"resource-template-{index + 1}"
+                tool = ToolDef(server, label, str(item.get("description") or ""),
+                               {}, source, extra={"resourceTemplateMetadata": item})
+                malformed_arguments = []
+            found, record = scan_tool_with_coverage(tool, use_llm=use_llm)
+            record.update(source_type=source_type, source_id=f"{server}/{surface_name}/{label}",
+                          content_type=content_type)
+            if surface_name == "prompts" and malformed_arguments:
+                record["fields_skipped"].extend(malformed_arguments)
+                record["unsupported_fields"].extend(malformed_arguments)
+                record["status"] = "partially_scanned" if record["fields_scanned"] else "unsupported"
+            findings.extend(found)
+            coverage.append(record)
+    return sorted(findings, key=lambda item: -item.confidence), coverage
+
+
 def aggregate_risk(findings: list[Finding]) -> list[dict]:
     """Explainable per-target roll-up; uses maximum severity rather than additive scores."""
     grouped: dict[tuple[str, str, str], list[Finding]] = {}
