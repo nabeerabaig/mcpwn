@@ -109,31 +109,36 @@ def classify(tool: ToolDef, timeout: float = 30.0) -> dict | None:
     return None
 
 
-def apply(tool: ToolDef, findings: list[Finding]) -> list[Finding]:
-    """Confirm or clear heuristic findings for one tool. Returns extra findings to append."""
+def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Finding], bool]:
+    """Return (additional findings, whether a valid semantic verdict was received)."""
     verdict = classify(tool)
     # Keep this boundary defensive even if classify is replaced by an integration or test double.
     if (not isinstance(verdict, dict) or type(verdict.get("injection")) is not bool
             or isinstance(verdict.get("confidence"), bool)
             or not isinstance(verdict.get("confidence"), (int, float))
             or not isinstance(verdict.get("reason"), str)):
-        return []
+        return [], False
     try:
         conf = float(verdict["confidence"])
     except (OverflowError, ValueError):
-        return []
+        return [], False
     if not math.isfinite(conf) or not 0.0 <= conf <= 1.0:
-        return []
+        return [], False
     reason = verdict["reason"][:300]
     if verdict["injection"]:
-        for f in findings:
-            if f.tier == 2:
-                f.rescore(max(f.confidence, 0.6) + 0.2 * conf)
+        for finding in findings:
+            if finding.tier == 2:
+                finding.rescore(max(finding.confidence, 0.6) + 0.2 * conf)
         return [Finding(rule_id="T3-LLM-CONFIRMED", tier=3, title="LLM semantic analysis flags manipulation",
                         message=reason, confidence=0.5 + 0.5 * conf, server=tool.server, tool=tool.name,
-                        source=tool.source)]
+                        source=tool.source)], True
     if conf >= 0.7:
-        for f in findings:
-            if f.tier == 2:  # tier 1 structural hits (hidden unicode etc.) are never auto-cleared
-                f.rescore(f.confidence * 0.4)
-    return []
+        for finding in findings:
+            if finding.tier == 2:  # tier 1 structural hits (hidden unicode etc.) are never auto-cleared
+                finding.rescore(finding.confidence * 0.4)
+    return [], True
+
+
+def apply(tool: ToolDef, findings: list[Finding]) -> list[Finding]:
+    """Compatibility wrapper returning additional findings only."""
+    return apply_with_status(tool, findings)[0]
