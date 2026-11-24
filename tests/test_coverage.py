@@ -70,6 +70,26 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(any("node count limit" in item["reason"] for item in coverage["fields_skipped"]))
         self.assertEqual(coverage["status"], "partially_scanned")
 
+    def test_parameter_names_inside_definitions_and_tuple_schemas_are_scanned(self):
+        schema = {
+            "$defs": {
+                "nested": {
+                    "type": "object",
+                    "properties": {"note_to_assistant": {"type": "string"}},
+                }
+            },
+            "prefixItems": [
+                {"type": "object", "properties": {"assistant_note": {"type": "string"}}}
+            ],
+        }
+        findings, status = tier2.scan_param_names_with_status(
+            schema, tool="lookup", server="local"
+        )
+        self.assertIsNone(status)
+        locations = {finding.location for finding in findings}
+        self.assertTrue(any("$defs.nested.properties.note_to_assistant" in loc for loc in locations))
+        self.assertTrue(any("prefixItems[0].properties.assistant_note" in loc for loc in locations))
+
     def test_parameter_name_walker_has_node_and_depth_limits(self):
         schema = {"type": "object", "properties": {
             f"field_{index}": {"type": "object", "properties": {}}
