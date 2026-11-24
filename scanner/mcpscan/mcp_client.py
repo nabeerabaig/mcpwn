@@ -236,7 +236,7 @@ def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
     return msg if isinstance(msg, dict) and msg.get("id") == rid else None
 
 
-def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
+def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0) -> tuple[list[ToolDef], list[dict]]:
     import urllib.error
     import urllib.request
     session_id = None
