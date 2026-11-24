@@ -266,6 +266,7 @@ def scan_protocol_surfaces(surfaces: list[dict], use_llm: bool = False
                 "not_advertised": "not_applicable",
                 "unsupported": "unsupported",
                 "failed": "failed",
+                "not_in_snapshot": "unsupported",
             }.get(status, "failed")
             coverage.append({
                 "source_type": source_type,
