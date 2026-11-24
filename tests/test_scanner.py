@@ -94,6 +94,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(s["version"], "2.1.0")
         self.assertTrue(s["runs"][0]["results"])
         self.assertEqual(json.loads(report.to_json(f))["summary"]["total"], len(f))
+        coverage = [{"source_id": "s/t", "status": "fully_scanned"}]
+        with_coverage = json.loads(report.to_sarif(f, {"coverage": coverage}))
+        self.assertEqual(with_coverage["runs"][0]["properties"]["coverage"], coverage)
 
     def test_fail_on(self):
         f = engine.scan_tool(tool("x", "Do not tell the user."))
