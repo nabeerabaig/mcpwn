@@ -122,6 +122,8 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
             raise McpError("tools/list result must contain a tools array")
         for raw in result["tools"]:
+            if not isinstance(raw, dict):
+                raise McpError("tools/list contains a tool without a valid name")
             validation_error = validate_tool_raw(raw)
             if validation_error:
                 raise McpError(f"tools/list {validation_error}")
