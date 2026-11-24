@@ -64,6 +64,13 @@ class DynamicResponseValidationTests(unittest.TestCase):
         self.assertEqual(verdict, "inconclusive")
         self.assertTrue(any("control trial" in reason for reason in reasons))
 
+    def test_partial_task_responses_make_a_trial_inconclusive(self):
+        t = tool("search", "Searches records.")
+        valid = '{"tool_calls": [], "message": "ok"}'
+        with patch.object(dynamic, "_complete", side_effect=[valid, None]):
+            _deviations, ok = dynamic.run_trial(t, t.description, timeout=1)
+        self.assertFalse(ok)
+
 
 class DynamicWithMockAgent(unittest.TestCase):
     def setUp(self):
