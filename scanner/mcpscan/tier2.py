@@ -144,7 +144,7 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
     return out
 
 
-def scan_param_names(schema: dict, *, tool: str, server: str, source: str = "") -> list[Finding]:
+def scan_param_names(schema: dict, *, tool: str, server: str, source: str = "", root_path: str = "inputSchema") -> list[Finding]:
     out: list[Finding] = []
 
     def walk(node, path):
@@ -168,5 +168,5 @@ def scan_param_names(schema: dict, *, tool: str, server: str, source: str = "") 
             for i, sub in enumerate(node.get(key) or []):
                 walk(sub, f"{path}.{key}[{i}]")
 
-    walk(schema, "inputSchema")
+    walk(schema, root_path)
     return out
