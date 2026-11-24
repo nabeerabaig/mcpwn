@@ -79,6 +79,7 @@ class CoverageTests(unittest.TestCase):
             with patch("mcpscan.tier3.classify", return_value=verdict):
                 _findings, coverage = engine.scan_tool_with_coverage(tool, use_llm=True)
         self.assertTrue(coverage["semantic_analysis_applied"])
+        self.assertEqual(coverage["semantic_review_status"], "benign")
 
 
 if __name__ == "__main__":
