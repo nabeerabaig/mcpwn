@@ -96,6 +96,9 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         findings.extend(tier2.scan_text(text, location=loc, sibling_tools=sibling_names, **ctx))
 
     findings.extend(tier2.scan_param_names(tool.input_schema, tool=tool.name, server=tool.server, source=tool.source))
+    if isinstance(tool.output_schema, dict):
+        findings.extend(tier2.scan_param_names(tool.output_schema, tool=tool.name, server=tool.server,
+                                                source=tool.source, root_path="outputSchema"))
 
     # A directive hidden in schema metadata (not the description) is more suspicious than in prose.
     for finding in findings:
