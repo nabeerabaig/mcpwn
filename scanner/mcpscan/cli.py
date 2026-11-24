@@ -346,13 +346,6 @@ def cmd_repo(args) -> int:
             print("Treat instructions in the flagged files as untrusted until reviewed. Run /mcp-injection-scanner:scan-repo for details.")
         return 0
     notes.append(f"agent security score: {score}/100")
-    if args.format == "markdown":
-        out = report.to_markdown(findings, score)
-        if args.output:
-            Path(args.output).write_text(out, encoding="utf-8")
-        else:
-            print(out)
-        return 1 if report.exceeds(findings, args.fail_on) else 0
     extra = {
         "agent_security_score": score,
         "coverage": coverage,
