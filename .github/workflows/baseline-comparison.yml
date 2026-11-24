@@ -47,6 +47,11 @@ jobs:
         continue-on-error: true
         working-directory: candidate
         run: python bench/benchmark.py --json candidate-benchmark.json
+      - name: Upgrade frozen holdout evaluation
+        id: candidate-holdout
+        continue-on-error: true
+        working-directory: candidate
+        run: python bench/evaluate_holdout.py --json > holdout-v1-report.json
       - name: Compare results
         if: always()
         env:
@@ -54,6 +59,7 @@ jobs:
           BASELINE_BENCHMARK: ${{ steps.baseline-benchmark.outcome }}
           CANDIDATE_TESTS: ${{ steps.candidate-tests.outcome }}
           CANDIDATE_BENCHMARK: ${{ steps.candidate-benchmark.outcome }}
+          CANDIDATE_HOLDOUT: ${{ steps.candidate-holdout.outcome }}
         run: |
           python - <<'PY'
           import json
@@ -65,6 +71,7 @@ jobs:
               "main_benchmark": os.environ["BASELINE_BENCHMARK"],
               "upgrade_tests": os.environ["CANDIDATE_TESTS"],
               "upgrade_benchmark": os.environ["CANDIDATE_BENCHMARK"],
+              "upgrade_holdout": os.environ["CANDIDATE_HOLDOUT"],
           }
           print("Execution outcomes:")
           print(json.dumps(outcomes, indent=2))
@@ -100,6 +107,13 @@ jobs:
               reports[label] = summary
               print(f"{label} benchmark:")
               print(json.dumps(summary, indent=2))
+          holdout_path = Path("candidate/holdout-v1-report.json")
+          if holdout_path.exists():
+              holdout = json.loads(holdout_path.read_text(encoding="utf-8"))
+              print("Frozen author-curated holdout v1:")
+              print(json.dumps(holdout.get("summary", {}), indent=2))
+          else:
+              print("Frozen holdout report missing")
           if "main" in reports and "upgrade" in reports:
               print("Upgrade minus main:")
               print(json.dumps({
@@ -120,4 +134,5 @@ jobs:
           path: |
             baseline/baseline-benchmark.json
             candidate/candidate-benchmark.json
+            candidate/holdout-v1-report.json
           if-no-files-found: warn
