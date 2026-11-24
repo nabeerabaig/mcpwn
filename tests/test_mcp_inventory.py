@@ -49,6 +49,46 @@ for line in sys.stdin:
             with self.assertRaisesRegex(mcp_client.McpError, 'page limit'):
                 mcp_client._list_tools(spec, lambda *_: {'tools': [{'name': 'one'}], 'nextCursor': 'next'})
 
+    def test_fetch_inventory_collects_advertised_surface_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / "server.py"
+            script.write_text(
+                """import json, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    method = request["method"]
+    if method == "initialize":
+        result = {"capabilities": {"prompts": {}, "resources": {}}}
+        response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
+    elif method == "tools/list":
+        response = {"jsonrpc": "2.0", "id": request["id"], "result": {"tools": []}}
+    elif method == "prompts/list":
+        response = {"jsonrpc": "2.0", "id": request["id"],
+                    "result": {"prompts": [{"name": "summary", "description": "Creates a summary."}]}}
+    elif method == "resources/list":
+        response = {"jsonrpc": "2.0", "id": request["id"],
+                    "result": {"resources": [{"name": "notes", "uri": "file:///notes.txt"}]}}
+    elif method == "resources/templates/list":
+        response = {"jsonrpc": "2.0", "id": request["id"],
+                    "error": {"code": -32601, "message": "Method not found"}}
+    else:
+        response = {"jsonrpc": "2.0", "id": request["id"],
+                    "error": {"code": -32601, "message": "Method not found"}}
+    print(json.dumps(response), flush=True)
+""",
+                encoding="utf-8"
+            )
+            tools, surfaces = mcp_client.fetch_inventory(
+                ServerSpec("local", sys.executable, [str(script)]), timeout=5
+            )
+        self.assertEqual(tools, [])
+        self.assertEqual({item["surface"]: item["status"] for item in surfaces}, {
+            "prompts": "scanned", "resources": "scanned", "resource_templates": "unsupported"
+        })
+        self.assertEqual(surfaces[0]["items"][0]["name"], "summary")
+
     def test_protocol_surface_inventory_queries_only_advertised_lists(self):
         called = []
 
