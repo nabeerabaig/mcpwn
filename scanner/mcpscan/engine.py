@@ -179,6 +179,17 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         else:
             semantic_review_status = "unavailable"
     semantic_applied = semantic_review_status in ("flagged", "benign")
+    if use_llm:
+        for finding in findings:
+            finding.semantic_status = semantic_review_status
+
+    for finding in findings:
+        finding.related_finding_ids = sorted({
+            other.finding_id for other in findings
+            if other.finding_id != finding.finding_id
+            and other.server == finding.server and other.tool == finding.tool
+            and other.category == finding.category
+        })
 
     total = len(discovered)
     scanned_count = len(scanned)
@@ -227,6 +238,31 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
         if key not in seen or f.confidence > seen[key].confidence:
             seen[key] = f
     return list(seen.values())
+
+
+
+
+def aggregate_risk(findings: list[Finding]) -> list[dict]:
+    """Explainable per-target roll-up; uses maximum severity rather than additive scores."""
+    grouped: dict[tuple[str, str, str], list[Finding]] = {}
+    for finding in findings:
+        key = (finding.server, finding.tool, finding.source)
+        grouped.setdefault(key, []).append(finding)
+    rows = []
+    for (server, tool, source), items in sorted(grouped.items()):
+        unique_ids = sorted({item.finding_id for item in items})
+        rows.append({
+            "server": server,
+            "tool": tool,
+            "source": source,
+            "highest_severity": max(items, key=lambda item: {"info": 0, "warning": 1, "critical": 2}[item.severity]).severity,
+            "highest_confidence": max(item.confidence for item in items),
+            "finding_count": len(unique_ids),
+            "categories": sorted({item.category for item in items}),
+            "finding_ids": unique_ids,
+            "aggregation_method": "maximum_severity_and_confidence; no additive risk score",
+        })
+    return rows
 
 
 def scan_tools_with_coverage(tools: list[ToolDef], use_llm: bool = False) -> tuple[list[Finding], list[dict]]:
