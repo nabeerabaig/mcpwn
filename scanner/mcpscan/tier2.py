@@ -197,7 +197,8 @@ def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source
             child = node.get(key)
             if isinstance(child, dict):
                 visited += 1
-                if visited > max_nodes:
+                budget[0] -= 1
+                if visited > max_nodes or budget[0] < 0:
                     return out, "parameter-schema node count limit exceeded"
                 stack.append((child, f"{path}.{key}", depth + 1))
 
@@ -206,7 +207,8 @@ def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source
             if isinstance(children, list):
                 for index, child in enumerate(children):
                     visited += 1
-                    if visited > max_nodes:
+                    budget[0] -= 1
+                    if visited > max_nodes or budget[0] < 0:
                         return out, "parameter-schema node count limit exceeded"
                     if isinstance(child, dict):
                         stack.append((child, f"{path}.{key}[{index}]", depth + 1))
