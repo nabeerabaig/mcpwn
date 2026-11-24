@@ -50,7 +50,9 @@ def to_sarif(findings: list[Finding], extra: dict | None = None) -> str:
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": uri.replace("\\", "/")},
                                                 "region": {"startLine": 1}},
                            "logicalLocations": [{"name": loc_name or "unknown"}]}],
-            "properties": {"confidence": f.confidence, "tier": f.tier, "severity": f.severity},
+            "properties": {"confidence": f.confidence, "tier": f.tier, "severity": f.severity,
+                           "findingId": f.finding_id, "detectorVersion": f.detector_version},
+            "partialFingerprints": {"mcpscanFindingId": f.finding_id},
         })
     run = {"tool": {"driver": {"name": "mcpscan", "version": __version__, "rules": rules}},
            "results": results}
