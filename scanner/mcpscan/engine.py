@@ -242,6 +242,56 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
 
 
 
+def _descriptor_issues(surface_name: str, item: dict) -> list[dict]:
+    """Validate protocol descriptor fields without coercing malformed values to text."""
+    issues = []
+
+    def require_string(key: str):
+        value = item.get(key)
+        if not isinstance(value, str) or not value.strip():
+            issues.append({"location": key, "reason": f"{key} must be a nonempty string"})
+
+    def optional_string(key: str):
+        if key in item and item[key] is not None and not isinstance(item[key], str):
+            issues.append({"location": key, "reason": f"{key} must be a string when provided"})
+
+    if surface_name == "prompts":
+        require_string("name")
+    elif surface_name == "resources":
+        require_string("name")
+        require_string("uri")
+    elif surface_name == "resource_templates":
+        require_string("name")
+        require_string("uriTemplate")
+
+    for key in ("title", "description", "mimeType"):
+        optional_string(key)
+    for key in ("annotations", "_meta"):
+        if key in item and item[key] is not None and not isinstance(item[key], dict):
+            issues.append({"location": key, "reason": f"{key} must be an object when provided"})
+
+    if surface_name == "prompts":
+        arguments = item.get("arguments", [])
+        if not isinstance(arguments, list):
+            issues.append({"location": "arguments", "reason": "prompt arguments must be an array"})
+        else:
+            for index, argument in enumerate(arguments):
+                prefix = f"arguments[{index}]"
+                if not isinstance(argument, dict):
+                    issues.append({"location": prefix, "reason": "prompt argument must be an object"})
+                    continue
+                if not isinstance(argument.get("name"), str) or not argument["name"].strip():
+                    issues.append({"location": f"{prefix}.name", "reason": "prompt argument name must be a nonempty string"})
+                if ("description" in argument and argument["description"] is not None
+                        and not isinstance(argument["description"], str)):
+                    issues.append({"location": f"{prefix}.description",
+                                   "reason": "prompt argument description must be a string"})
+                if ("required" in argument and type(argument["required"]) is not bool):
+                    issues.append({"location": f"{prefix}.required",
+                                   "reason": "prompt argument required flag must be boolean"})
+    return issues
+
+
 def scan_protocol_surfaces(surfaces: list[dict], use_llm: bool = False
                           ) -> tuple[list[Finding], list[dict]]:
     """Scan prompt/resource descriptors returned by MCP list methods; never fetch bodies."""
@@ -253,6 +303,19 @@ def scan_protocol_surfaces(surfaces: list[dict], use_llm: bool = False
         "resource_templates": ("mcp_resource_template", "resource_template"),
     }
     for surface in surfaces:
+        if not isinstance(surface, dict):
+            coverage.append({
+                "source_type": "mcp_protocol_metadata", "source_id": "unknown",
+                "content_type": "protocol_metadata", "status": "unsupported",
+                "fields_discovered": 0, "fields_scanned": 0,
+                "fields_skipped": [{"location": "descriptor", "reason": "surface inventory entry is not an object"}],
+                "unsupported_fields": [{"location": "descriptor", "reason": "surface inventory entry is not an object"}],
+                "scan_errors": [], "semantic_analysis_applied": False,
+                "semantic_review_status": "not_requested",
+                "dynamic_validation_performed": False,
+                "dynamic_validation_status": "not_requested",
+            })
+            continue
         surface_name = surface.get("surface", "")
         source_type, content_type = surface_types.get(
             surface_name, ("mcp_protocol_metadata", "protocol_metadata")
@@ -311,46 +374,44 @@ def scan_protocol_surfaces(surfaces: list[dict], use_llm: bool = False
                     "dynamic_validation_status": "not_requested",
                 })
                 continue
+            descriptor_issues = _descriptor_issues(surface_name, item)
+            description = item.get("description", "")
+            if not isinstance(description, str):
+                description = ""
             if surface_name == "prompts":
-                label = item.get("name") or f"prompt-{index + 1}"
+                label = item.get("name") if isinstance(item.get("name"), str) else f"prompt-{index + 1}"
                 arguments = item.get("arguments", [])
                 properties = {}
-                malformed_arguments = []
                 if isinstance(arguments, list):
-                    for arg_index, argument in enumerate(arguments):
-                        if not isinstance(argument, dict) or not isinstance(argument.get("name"), str):
-                            malformed_arguments.append({
-                                "location": f"arguments[{arg_index}]",
-                                "reason": "prompt argument metadata must contain a string name",
-                            })
+                    for argument in arguments:
+                        if not isinstance(argument, dict):
                             continue
-                        properties[argument["name"]] = {
+                        argument_name = argument.get("name")
+                        if not isinstance(argument_name, str) or not argument_name.strip():
+                            continue
+                        argument_description = argument.get("description", "")
+                        properties[argument_name] = {
                             "type": "string",
-                            "description": argument.get("description", ""),
+                            "description": argument_description if isinstance(argument_description, str) else "",
                         }
-                else:
-                    malformed_arguments.append({
-                        "location": "arguments",
-                        "reason": "prompt arguments must be an array",
-                    })
                 schema = {"type": "object", "properties": properties}
-                tool = ToolDef(server, f"prompt:{label}", str(item.get("description") or ""),
+                tool = ToolDef(server, f"prompt:{label}", description,
                                schema, source, extra={"promptMetadata": item})
             elif surface_name == "resources":
-                label = f"resource-{index + 1}"
-                tool = ToolDef(server, label, str(item.get("description") or ""),
-                               {}, source, extra={"resourceMetadata": item})
+                label = item.get("name") if isinstance(item.get("name"), str) else f"resource-{index + 1}"
+                tool = ToolDef(server, label, description, {}, source,
+                               extra={"resourceMetadata": item})
             else:
-                label = f"resource-template-{index + 1}"
-                tool = ToolDef(server, label, str(item.get("description") or ""),
-                               {}, source, extra={"resourceTemplateMetadata": item})
-                malformed_arguments = []
+                label = item.get("name") if isinstance(item.get("name"), str) else f"resource-template-{index + 1}"
+                tool = ToolDef(server, label, description, {}, source,
+                               extra={"resourceTemplateMetadata": item})
             found, record = scan_tool_with_coverage(tool, use_llm=use_llm)
             record.update(source_type=source_type, source_id=f"{server}/{surface_name}/{label}",
                           content_type=content_type)
-            if surface_name == "prompts" and malformed_arguments:
-                record["fields_skipped"].extend(malformed_arguments)
-                record["unsupported_fields"].extend(malformed_arguments)
+            if descriptor_issues:
+                record["fields_discovered"] += len(descriptor_issues)
+                record["fields_skipped"].extend(descriptor_issues)
+                record["unsupported_fields"].extend(descriptor_issues)
                 record["status"] = "partially_scanned" if record["fields_scanned"] else "unsupported"
             findings.extend(found)
             coverage.append(record)
