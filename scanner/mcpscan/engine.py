@@ -172,7 +172,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
 
     total = len(discovered)
     scanned_count = len(scanned)
-    unsupported_count = sum("unsupported" in item["reason"] or "limit" in item["reason"]
+    unsupported_count = sum("unsupported" in item["reason"] or "limit" in item["reason"] or "non-string" in item["reason"]
                              for item in skipped)
     if errors:
         status = "failed"
@@ -190,7 +190,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         "fields_discovered": total,
         "fields_scanned": scanned_count,
         "fields_skipped": skipped,
-        "unsupported_fields": [item for item in skipped if "unsupported" in item["reason"] or "limit" in item["reason"]],
+        "unsupported_fields": [item for item in skipped if "unsupported" in item["reason"] or "limit" in item["reason"] or "non-string" in item["reason"]],
         "scan_errors": errors,
         "semantic_analysis_applied": semantic_applied,
         "semantic_review_status": semantic_review_status,
