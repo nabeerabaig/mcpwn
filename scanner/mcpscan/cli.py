@@ -161,13 +161,25 @@ def cmd_scan(args) -> int:
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
     if args.dynamic:
-        findings, dnotes, stats = dynamic.apply(tools, findings, timeout=args.dynamic_timeout)
+        tool_keys = {(tool.server, tool.name) for tool in tools}
+        tool_findings = [finding for finding in findings
+                         if (finding.server, finding.tool) in tool_keys]
+        descriptor_findings = [finding for finding in findings
+                               if (finding.server, finding.tool) not in tool_keys]
+        tool_findings, dnotes, stats = dynamic.apply(
+            tools, tool_findings, timeout=args.dynamic_timeout
+        )
+        findings = descriptor_findings + tool_findings
         notes.extend(dnotes)
         if not args.redact_evidence:
             extra["dynamic"] = stats
         tested = set(stats.get("tested_tools", []))
         verdicts = stats.get("tool_verdicts", {})
         for record in coverage:
+            if record["source_type"] != "mcp_tool":
+                record["dynamic_validation_performed"] = False
+                record["dynamic_validation_status"] = "not_applicable_to_descriptor"
+                continue
             source_id = record["source_id"]
             outcome = verdicts.get(source_id)
             record["dynamic_validation_performed"] = outcome is not None
@@ -180,6 +192,9 @@ def cmd_scan(args) -> int:
             else:
                 record["dynamic_validation_status"] = "not_selected"
         for finding in findings:
+            if (finding.server, finding.tool) not in tool_keys:
+                finding.dynamic_validation_status = "not_applicable_to_descriptor"
+                continue
             source_id = f"{finding.server}/{finding.tool}"
             finding.dynamic_validation_status = verdicts.get(
                 source_id, "unavailable" if stats.get("backend") is None else "not_selected"
