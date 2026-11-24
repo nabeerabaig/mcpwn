@@ -31,7 +31,7 @@ def to_json(findings: list[Finding], extra: dict | None = None) -> str:
     return json.dumps(doc, indent=2, ensure_ascii=False)
 
 
-def to_sarif(findings: list[Finding]) -> str:
+def to_sarif(findings: list[Finding], extra: dict | None = None) -> str:
     rules, seen = [], set()
     for f in findings:
         if f.rule_id not in seen:
@@ -52,9 +52,13 @@ def to_sarif(findings: list[Finding]) -> str:
                            "logicalLocations": [{"name": loc_name or "unknown"}]}],
             "properties": {"confidence": f.confidence, "tier": f.tier, "severity": f.severity},
         })
+    run = {"tool": {"driver": {"name": "mcpscan", "version": __version__, "rules": rules}},
+           "results": results}
+    if extra:
+        run["properties"] = extra
     return json.dumps({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "version": "2.1.0",
-        "runs": [{"tool": {"driver": {"name": "mcpscan", "version": __version__, "rules": rules}}, "results": results}],
+        "runs": [run],
     }, indent=2)
 
 
