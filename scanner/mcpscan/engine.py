@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Iterator, Any
 
 from . import tier1, tier2, tier3
-from .models import Finding, ToolDef
+from .models import Finding, ToolDef\nfrom .normalize import normalize_text
 
 MAX_CONTENT_DEPTH = 32
 MAX_CONTENT_NODES = 20000
@@ -100,9 +100,27 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
     except (RecursionError, RuntimeError, TypeError, ValueError) as exc:
         errors.append(type(exc).__name__)
 
+    normalized_fields = []
+    suspicious_unicode = []
     for loc, text in texts:
         findings.extend(tier1.scan_text(text, location=loc, **ctx))
         findings.extend(tier2.scan_text(text, location=loc, sibling_tools=sibling_names, **ctx))
+        normalized = normalize_text(text)
+        if normalized.transformed and normalized.normalized is not None:
+            normalized_fields.append(loc)
+            normalized_findings = tier2.scan_text(
+                normalized.normalized, location=loc + "#nfkc",
+                sibling_tools=sibling_names, **ctx
+            )
+            for finding in normalized_findings:
+                finding.evidence = text[:200]
+                finding.message += " Detected in an NFKC-normalized representation; evidence is preserved from the original source."
+            findings.extend(normalized_findings)
+        if len(suspicious_unicode) < 200:
+            for character in normalized.suspicious_characters:
+                if len(suspicious_unicode) >= 200:
+                    break
+                suspicious_unicode.append({"location": loc, **character})
 
     findings.extend(tier2.scan_param_names(tool.input_schema, tool=tool.name, server=tool.server, source=tool.source))
     if isinstance(tool.output_schema, dict):
@@ -147,6 +165,8 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         "dynamic_validation_performed": False,
         "discovered_locations": discovered,
         "scanned_locations": scanned,
+        "normalized_fields": normalized_fields,
+        "suspicious_unicode": suspicious_unicode,
     }
     return findings, coverage
 
