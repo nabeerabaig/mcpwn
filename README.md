@@ -152,6 +152,10 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 
 **Read this carefully:** this is *not* the AppSecSanta/Cisco audit set, which I did not have, so the "<10% FP vs 78%" comparison has not been made. The detectors were also iterated while looking at this corpus, so the numbers are optimistic. Treat them as a regression baseline, not evidence of real-world accuracy. No real LLM was run for Tier 3 or dynamic mode; dynamic mode is tested only with a deterministic mock agent.
 
+The benchmark JSON now includes TP/FP/TN/FN, precision, recall, F1, per-tier contributions, and scan-coverage counts. These metrics describe only the included corpus and are not calibrated probabilities.
+
+A separate frozen, author-curated evaluation set is in [holdout-v1.json](bench/holdout-v1.json). Run `python3 bench/evaluate_holdout.py --json` to report its results. It is kept separate from the development corpus and is not used to tune detector rules. It is not independently sourced or independently validated, so it must not be presented as proof of real-world accuracy. Keep it frozen; create a new version for future cases rather than silently changing its labels or examples.
+
 See the [offline benign-tool pilot](bench/benign_pilot.md) for a separate five-tool smoke test and reproducible CLI command.
 
 The [public MCP tool evaluation](bench/benign_public.md) adds ten doc-derived benign fixtures from two public reference servers.
