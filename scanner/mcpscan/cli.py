@@ -11,7 +11,7 @@ from . import chains as chains_mod
 from . import audit_html, dynamic, engine, pinning, portfolio, proxy, report, repo_files, sandbox, snapshot, tier3
 from .discovery import CLIENTS, discover
 from .mcp_client import McpError, fetch_tools
-from .models import Finding, ServerSpec, ToolDef, SEVERITY_ORDER
+from .models import Finding, ServerSpec, ToolDef, SEVERITY_ORDER, validate_tool_raw
 
 
 class CaptureError(ValueError):
@@ -41,27 +41,21 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
                 if getattr(args, "only", None) and sname not in args.only:
                     continue
                 lst = d.get("tools") if isinstance(d, dict) else d
-                if not isinstance(lst, list) or not all(isinstance(t, dict) for t in lst):
+                if not isinstance(lst, list):
                     raise CaptureError("expected a list of tool objects per server")
+                names = set()
+                for raw in lst:
+                    validation_error = validate_tool_raw(raw)
+                    if validation_error:
+                        raise CaptureError(f"snapshot {validation_error}")
+                    if raw["name"] in names:
+                        raise CaptureError("snapshot contains a duplicate tool name")
+                    names.add(raw["name"])
                 if captured is not None:
                     if sname in captured:
                         raise CaptureError("server name appears in more than one input snapshot")
-                    if not sname.strip():
+                    if not isinstance(sname, str) or not sname.strip():
                         raise CaptureError("snapshot contains an empty server name")
-                    names = set()
-                    for raw in lst:
-                        name = raw.get("name")
-                        if not isinstance(name, str) or not name.strip() or name in names:
-                            raise CaptureError("snapshot contains a missing or duplicate tool name")
-                        if not isinstance(raw.get("description", ""), str):
-                            raise CaptureError("snapshot tool description must be a string")
-                        for field in ("inputSchema", "input_schema", "outputSchema", "output_schema"):
-                            if field in raw and raw[field] is not None and not isinstance(raw[field], dict):
-                                raise CaptureError("snapshot tool schema must be an object")
-                        for field in ("annotations", "_meta"):
-                            if field in raw and raw[field] is not None and not isinstance(raw[field], dict):
-                                raise CaptureError("snapshot tool metadata must be an object")
-                        names.add(name)
                     captured.add(sname)
                 tools.extend(ToolDef.from_mcp(sname, t, str(path)) for t in lst)
         if captured is not None:
