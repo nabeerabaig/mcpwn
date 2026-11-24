@@ -2,7 +2,7 @@
 
 A standalone CLI and Claude Code plugin that scan MCP servers and agent instruction files for prompt injection. The core scanner uses the Python standard library; YAML config discovery uses optional PyYAML.
 
-Status: **v0.2.0.**
+Status: **v0.3 security upgrade in development (unreleased).**
 
 ## Install locally
 
@@ -26,7 +26,9 @@ A `SessionStart` hook runs a quiet static repo scan and only speaks up if it fin
 
 The MCP tool scan now emits a per-tool coverage record in JSON output. It records discovered and scanned text fields, skipped or unsupported values, scan status, whether Tier 3 produced a semantic finding, and whether dynamic validation actually tested that tool. Text output includes a compact coverage summary.
 
-For tool definitions, the scanner inspects names, descriptions, input schemas, output schemas, annotations, `_meta`, and additional metadata fields preserved from the server response. Schema traversal has depth, node-count, and aggregate text-size limits. Values that are not text are recorded as not applicable rather than being counted as successfully scanned. Unsupported values and exceeded limits are reported.
+For tool definitions, the scanner inspects names, descriptions, input schemas, output schemas, annotations, `_meta`, metadata values, and string-valued metadata keys preserved from the server response. General metadata traversal and schema parameter-name analysis have explicit depth, node-count, and text-size limits. Values that are not text are recorded as not applicable rather than being counted as successfully scanned. Unsupported values and exceeded limits are reported.
+
+Text is analyzed in its original form and, when NFKC changes it, in a normalized analysis representation as well. The original source remains the evidence shown in findings. Suspicious format, surrogate, and private-use Unicode characters are separately recorded with their code points and source locations; normalization does not silently delete them.
 
 **Important protocol boundary:** the live collector currently requests `tools/list` only. It does not collect or claim to scan MCP prompts, prompt arguments, resources, or resource templates. JSON coverage output lists these unqueried surfaces explicitly. A successful tool-definition scan is not a complete MCP-server audit.
 
@@ -154,7 +156,9 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 
 The benchmark JSON now includes TP/FP/TN/FN, precision, recall, F1, per-tier contributions, and scan-coverage counts. These metrics describe only the included corpus and are not calibrated probabilities.
 
-A separate frozen, author-curated evaluation set is in [holdout-v1.json](bench/holdout-v1.json). Run `python3 bench/evaluate_holdout.py --json` to report its results. It is kept separate from the development corpus and is not used to tune detector rules. It is not independently sourced or independently validated, so it must not be presented as proof of real-world accuracy. Keep it frozen; create a new version for future cases rather than silently changing its labels or examples.
+A separate frozen, 12-case author-curated evaluation set is in [holdout-v1.json](bench/holdout-v1.json). Run `python3 bench/evaluate_holdout.py --json` to report its results. It is kept separate from the development corpus and is not used to tune detector rules. It is not independently sourced or independently validated, so it must not be presented as proof of real-world accuracy. Keep it frozen; create a new version for future cases rather than silently changing its labels or examples.
+
+For a reproducible before/after comparison, the `Baseline versus security upgrade` GitHub Actions workflow runs the unit/integration suite and static benchmark against both unchanged `main` and this branch. It derives confusion-matrix metrics from the legacy main benchmark format so the results are comparable.
 
 See the [offline benign-tool pilot](bench/benign_pilot.md) for a separate five-tool smoke test and reproducible CLI command.
 
