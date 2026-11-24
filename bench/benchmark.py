@@ -26,9 +26,11 @@ def run(samples, use_dynamic, threshold):
     tools = [ToolDef("bench", f"{cat}:{name}", desc, schema) for cat, name, desc, schema in samples]
     results = []
     findings_by = {}
+    coverage_by = {}
+    siblings = {"list_files", "git_status", "create_customer", "run_tests", "search",
+                "get_row", "get_ticket", "start_export"}
     for t in tools:
-        findings_by[t.name] = engine.scan_tool(t, {"list_files", "git_status", "create_customer", "run_tests", "search",
-                                                   "get_row", "get_ticket", "start_export"})
+        findings_by[t.name], coverage_by[t.name] = engine.scan_tool_with_coverage(t, siblings)
     if use_dynamic:
         allf = [f for fs in findings_by.values() for f in fs]
         for t in tools:
@@ -42,9 +44,14 @@ def run(samples, use_dynamic, threshold):
     for (cat, name, *_), t in zip(samples, tools):
         fs = findings_by[t.name]
         top = max((f.confidence for f in fs), default=0.0)
+        coverage = coverage_by[t.name]
         results.append({"category": cat, "name": name, "source_type": "mcp_tool_definition",
                         "top": top, "flagged": top >= threshold,
                         "tiers": sorted({f.tier for f in fs if f.confidence >= threshold}),
+                        "coverage_status": coverage["status"],
+                        "fields_discovered": coverage["fields_discovered"],
+                        "fields_scanned": coverage["fields_scanned"],
+                        "unsupported_fields": len(coverage["unsupported_fields"]),
                         "rules": sorted({f.rule_id for f in fs if f.confidence >= threshold})})
     return results
 
@@ -102,6 +109,11 @@ def main():
                     "true_negatives": tn, "false_negatives": fn,
                     "precision": precision, "recall": recall, "f1": f1,
                     "source_type": "mcp_tool_definition",
+                    "scan_failures": sum(row["coverage_status"] == "failed" for row in mal + ben),
+                    "unsupported_cases": sum(row["coverage_status"] in ("unsupported", "partially_scanned")
+                                              for row in mal + ben),
+                    "fields_discovered": sum(row["fields_discovered"] for row in mal + ben),
+                    "fields_scanned": sum(row["fields_scanned"] for row in mal + ben),
                 },
                 "malicious": mal, "benign": ben,
             }, f, indent=2)
