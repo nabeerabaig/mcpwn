@@ -161,6 +161,11 @@ def cmd_scan(args) -> int:
                 record["dynamic_validation_status"] = "inconclusive"
             else:
                 record["dynamic_validation_status"] = "not_selected"
+        for finding in findings:
+            source_id = f"{finding.server}/{finding.tool}"
+            finding.dynamic_validation_status = verdicts.get(
+                source_id, "unavailable" if stats.get("backend") is None else "not_selected"
+            )
         findings.sort(key=lambda f: -f.confidence)
     if args.format == "text":
         counts = {}
@@ -171,6 +176,7 @@ def cmd_scan(args) -> int:
                      f"{sum(r['fields_discovered'] for r in coverage)} discovered")
         notes.append("not queried by this tools/list scanner: prompts, prompt arguments, resources, resource templates")
     findings = report.filter_min(findings, args.min_confidence)
+    extra["risk_summary"] = engine.aggregate_risk(findings)
     emit(findings, args.format, notes, args.output, extra, redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
 
