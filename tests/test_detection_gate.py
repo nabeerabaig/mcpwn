@@ -45,6 +45,23 @@ class DetectionGateTests(unittest.TestCase):
         self.assertEqual(parsed['summary']['malicious'], {'cases': 52, 'flagged': 48})
         self.assertEqual(len(parsed['known_mismatches']), 4)
 
+    def test_benchmark_json_reports_confusion_and_coverage_metrics(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "benchmark.json"
+            result = subprocess.run([sys.executable, str(ROOT / "bench/benchmark.py"),
+                                     "--json", str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            summary = report["summary"]
+            self.assertEqual(summary["true_positives"] + summary["false_negatives"], 52)
+            self.assertEqual(summary["true_negatives"] + summary["false_positives"], 58)
+            self.assertIn("precision", summary)
+            self.assertIn("recall", summary)
+            self.assertIn("f1", summary)
+            self.assertIn("scan_failures", summary)
+            self.assertIn("unsupported_cases", summary)
+            self.assertTrue(all("coverage_status" in row for row in report["malicious"] + report["benign"]))
+
     def test_invalid_baseline_fails_with_exit_two(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'baseline.json'
