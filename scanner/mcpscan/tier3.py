@@ -45,20 +45,33 @@ def _parse(text: str) -> dict | None:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         return None
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate classifier field")
+            result[key] = value
+        return result
+
     try:
-        data = json.loads(text[start:end + 1])
+        data = json.loads(text[start:end + 1], object_pairs_hook=unique_fields)
     except (json.JSONDecodeError, TypeError, ValueError):
         return None
     if not isinstance(data, dict) or type(data.get("injection")) is not bool:
         return None
     confidence = data.get("confidence")
-    if (isinstance(confidence, bool) or not isinstance(confidence, (int, float))
-            or not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0):
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return None
+    try:
+        score = float(confidence)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
         return None
     reason = data.get("reason")
     if not isinstance(reason, str):
         return None
-    return {"injection": data["injection"], "confidence": float(confidence), "reason": reason[:300]}
+    return {"injection": data["injection"], "confidence": score, "reason": reason[:300]}
 
 
 def classify(tool: ToolDef, timeout: float = 30.0) -> dict | None:
@@ -103,11 +116,14 @@ def apply(tool: ToolDef, findings: list[Finding]) -> list[Finding]:
     if (not isinstance(verdict, dict) or type(verdict.get("injection")) is not bool
             or isinstance(verdict.get("confidence"), bool)
             or not isinstance(verdict.get("confidence"), (int, float))
-            or not math.isfinite(verdict["confidence"])
-            or not 0.0 <= verdict["confidence"] <= 1.0
             or not isinstance(verdict.get("reason"), str)):
         return []
-    conf = float(verdict["confidence"])
+    try:
+        conf = float(verdict["confidence"])
+    except (OverflowError, ValueError):
+        return []
+    if not math.isfinite(conf) or not 0.0 <= conf <= 1.0:
+        return []
     reason = verdict["reason"][:300]
     if verdict["injection"]:
         for f in findings:
