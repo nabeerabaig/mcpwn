@@ -136,9 +136,9 @@ Use `scan --strict` or `drift --strict` to exit `2` on incomplete collection or 
 
 - `confirmed`: behavior deviates only with the real description. Adds `D-CONFIRMED` (0.98).
 - `cleared`: no deviation. Findings are *demoted* (critical becomes warning; lower ones x0.6) but not erased, because a model ignoring an injection does not prove other agents will. Tier 1 hits (hidden characters, base64) are never demoted.
-- `inconclusive`: the model returned nothing parseable.
+- `inconclusive`: either the real-description or control trial failed to return a valid structured response. A failed control can never be treated as evidence that the description caused the behavior.
 
-Backends: `MCPSCAN_AGENT_CMD`, `MCPSCAN_OLLAMA_MODEL` (local, Ollama), or `ANTHROPIC_API_KEY`. With none set, the step is skipped and says so. `--sandbox docker` launches scanned servers in a locked-down container (`--network none`, read-only, caps dropped); servers that need the network to start (e.g. `npx`) need `--sandbox-network bridge` or a prebuilt image.
+Backends: `MCPSCAN_AGENT_CMD`, `MCPSCAN_OLLAMA_MODEL` (local, Ollama), or `ANTHROPIC_API_KEY`. The command backend may be a deterministic mock; the reported backend name does not prove that a real LLM was tested. With none set, the step is skipped and says so. `--sandbox docker` launches scanned servers in a locked-down container (`--network none`, read-only, caps dropped); servers that need the network to start (e.g. `npx`) need `--sandbox-network bridge` or a prebuilt image.
 
 ## Benchmark (`python3 bench/benchmark.py`)
 
