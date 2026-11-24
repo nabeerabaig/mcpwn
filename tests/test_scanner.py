@@ -296,19 +296,21 @@ class EndToEndTests(unittest.TestCase):
             protocol_surfaces.extend(surfaces)
             return [actual_tool], []
 
-        with patch.object(cli, "_collect_for_command", side_effect=collect), \\
-             patch.object(cli.dynamic, "apply", return_value=([], [], {
-                 "backend": None, "tested_tools": [], "tool_verdicts": {},
-                 "confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0,
-             })) as apply_mock:
-            output = io.StringIO()
-            with redirect_stdout(output):
-                self.assertEqual(cli.cmd_scan(args), 0)
+        with patch.object(cli, "_collect_for_command", side_effect=collect):
+            with patch.object(cli.dynamic, "apply", return_value=([], [], {
+                "backend": None, "tested_tools": [], "tool_verdicts": {},
+                "confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0,
+            })) as apply_mock:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(cli.cmd_scan(args), 0)
         sent_to_dynamic = apply_mock.call_args.args[1]
         expected_tool_findings = engine.scan_tool(actual_tool)
         self.assertEqual({finding.finding_id for finding in sent_to_dynamic},
                          {finding.finding_id for finding in expected_tool_findings})
-        self.assertTrue(json.loads(output.getvalue())["findings"] == [])
+        reported = json.loads(output.getvalue())["findings"]
+        self.assertTrue(reported)
+        self.assertTrue(all(item["tool"] == "resource:resource-1" for item in reported))
 
     def test_clean_server_passes_ci_gate(self):
         d, cfg = self.config("clean")
