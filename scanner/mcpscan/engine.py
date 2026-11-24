@@ -12,12 +12,15 @@ MAX_CONTENT_NODES = 20000
 MAX_TEXT_CHARS = 1_000_000
 
 
-def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list[int] | None = None):
+def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list | None = None):
     """Yield bounded (location, text) pairs without coercing arbitrary objects to strings."""
     if budget is None:
-        budget = [MAX_CONTENT_NODES, MAX_TEXT_CHARS]
+        budget = [MAX_CONTENT_NODES, MAX_TEXT_CHARS, None]
+    if budget[2] is not None:
+        return
     if budget[0] <= 0:
-        yield (path, None, "node limit exceeded")
+        budget[2] = "node count limit exceeded"
+        yield (path, None, budget[2])
         return
     budget[0] -= 1
     if depth > MAX_CONTENT_DEPTH:
@@ -25,18 +28,27 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list[int] | None
         return
     if isinstance(node, str):
         if len(node) > budget[1]:
-            yield (path, None, "text size limit exceeded")
-            budget[1] = 0
+            budget[2] = "aggregate text size limit exceeded"
+            yield (path, None, budget[2])
             return
         budget[1] -= len(node)
         yield (path, node, None)
     elif isinstance(node, dict):
         for key, value in node.items():
+            if budget[2] is not None:
+                return
             if not isinstance(key, str):
                 yield (path, None, "non-string object key")
                 continue
             if key in ("properties", "$defs", "definitions") and isinstance(value, dict):
                 for property_name, property_value in value.items():
+                    if budget[2] is not None:
+                        return
+                    if budget[0] <= 0:
+                        budget[2] = "node count limit exceeded"
+                        yield (path, None, budget[2])
+                        return
+                    budget[0] -= 1
                     if isinstance(property_name, str):
                         yield (f"{path}.{key}.{property_name}#name", property_name, None)
                     else:
@@ -47,12 +59,15 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list[int] | None
                 yield from _walk_text(value, f"{path}.{key}", depth=depth + 1, budget=budget)
     elif isinstance(node, list):
         for index, value in enumerate(node):
+            if budget[2] is not None:
+                return
             yield from _walk_text(value, f"{path}[{index}]", depth=depth + 1, budget=budget)
-    elif node is not None and isinstance(node, (bool, int, float)):
+    elif node is None:
+        yield (path, None, "not applicable: null value")
+    elif isinstance(node, (bool, int, float)):
         yield (path, None, "not applicable: non-text scalar")
-    elif node is not None:
+    else:
         yield (path, None, f"unsupported value type: {type(node).__name__}")
-
 
 def iter_schema_strings(node, path: str = "inputSchema") -> Iterator[tuple[str, str]]:
     """Backward-compatible iterator over strings in JSON Schema structures."""
