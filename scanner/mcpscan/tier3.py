@@ -35,7 +35,7 @@ def backend_available() -> str | None:
 
 
 def _payload(tool: ToolDef) -> str:
-    return json.dumps({"name": tool.name, "description": tool.description, "inputSchema": tool.input_schema})[:12000]
+    return json.dumps(tool.to_dict(), ensure_ascii=False, default=str)[:12000]
 
 
 def _parse(text: str) -> dict | None:
