@@ -264,7 +264,7 @@ class RepoFileTests(unittest.TestCase):
             "CLAUDE.md": "placeholder",
             ".github/ISSUE_TEMPLATE/binary.bin": "binary placeholder",
         })
-        (d / "CLAUDE.md").write_bytes(b"\\xff\\xfe\\x80")
+        (d / "CLAUDE.md").write_bytes(b"\xff\xfe\x80")
         (d / ".github/ISSUE_TEMPLATE/binary.bin").write_bytes(b"hello")
         findings, files, coverage = repo_files.scan_repo_with_coverage(d)
         records = {Path(record["source_id"]).name: record for record in coverage}
