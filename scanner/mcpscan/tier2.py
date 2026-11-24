@@ -187,12 +187,17 @@ def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source
                 if isinstance(sub, dict):
                     stack.append((sub, f"{path}.properties.{name}", depth + 1))
 
-        for key in ("items", "additionalProperties"):
+        # Traverse the schema-bearing keywords across common JSON Schema drafts.
+        for key in ("items", "additionalProperties", "not", "if", "then", "else",
+                    "contains", "propertyNames"):
             child = node.get(key)
             if isinstance(child, dict):
+                visited += 1
+                if visited > max_nodes:
+                    return out, "parameter-schema node count limit exceeded"
                 stack.append((child, f"{path}.{key}", depth + 1))
 
-        for key in ("anyOf", "oneOf", "allOf"):
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
             children = node.get(key)
             if isinstance(children, list):
                 for index, child in enumerate(children):
@@ -201,6 +206,20 @@ def scan_param_names_with_status(schema: dict, *, tool: str, server: str, source
                         return out, "parameter-schema node count limit exceeded"
                     if isinstance(child, dict):
                         stack.append((child, f"{path}.{key}[{index}]", depth + 1))
+
+        for key in ("$defs", "definitions", "patternProperties", "dependentSchemas"):
+            definitions = node.get(key)
+            if isinstance(definitions, dict):
+                for definition_name, child in definitions.items():
+                    visited += 1
+                    if visited > max_nodes:
+                        return out, "parameter-schema node count limit exceeded"
+                    if isinstance(definition_name, str):
+                        text_chars += len(definition_name)
+                        if text_chars > max_text_chars:
+                            return out, "parameter-schema text size limit exceeded"
+                    if isinstance(child, dict):
+                        stack.append((child, f"{path}.{key}.{definition_name}", depth + 1))
 
     return out, None
 
