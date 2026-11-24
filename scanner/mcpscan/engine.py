@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Iterator, Any
 
 from . import tier1, tier2, tier3
-from .models import Finding, ToolDef\nfrom .normalize import normalize_text
+from .models import Finding, ToolDef
+from .normalize import normalize_text
 
 MAX_CONTENT_DEPTH = 32
 MAX_CONTENT_NODES = 20000
