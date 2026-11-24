@@ -310,15 +310,31 @@ def cmd_repo(args) -> int:
                 return 2
         agent_files = set(repo_files.find_files(root))
         files = sorted(p for p in ((root / n).resolve() for n in names) if p in agent_files)
-        findings = [f for p in files for f in repo_files.scan_file(p, root)]
+        findings, coverage = [], []
+        for path in files:
+            found, record = repo_files.scan_file_with_coverage(path, root)
+            findings.extend(found)
+            coverage.append(record)
     else:
-        findings, files = repo_files.scan_repo(root)
-    notes = [f"scanned {len(files)} agent config file(s)"] + [f"  {p.relative_to(root)}" for p in files]
+        findings, files, coverage = repo_files.scan_repo_with_coverage(root)
+    notes = [f"scanned {len(files)} agent instruction/skill file(s)"] + [f"  {p.relative_to(root)}" for p in files]
     if args.include_mcp:
         args.config, args.tools_json = None, None
-        tools, mnotes = collect_tools(args)
-        findings.extend(engine.scan_tools(tools))
+        protocol_surfaces: list[dict] = []
+        tools, mnotes = collect_tools(args, protocol_surfaces=protocol_surfaces)
+        mcp_findings, mcp_coverage = engine.scan_tools_with_coverage(tools)
+        descriptor_findings, descriptor_coverage = engine.scan_protocol_surfaces(protocol_surfaces)
+        findings.extend(mcp_findings)
+        findings.extend(descriptor_findings)
+        coverage.extend(mcp_coverage)
+        coverage.extend(descriptor_coverage)
         notes.extend(mnotes)
+    coverage_counts = {}
+    for record in coverage:
+        coverage_counts[record["status"]] = coverage_counts.get(record["status"], 0) + 1
+    notes.append("coverage: " + ", ".join(f"{key}={value}" for key, value in sorted(coverage_counts.items())))
+    notes.append(f"coverage fields: {sum(record['fields_scanned'] for record in coverage)} scanned / "
+                 f"{sum(record['fields_discovered'] for record in coverage)} discovered")
     findings = report.filter_min(findings, args.min_confidence)
     score = repo_files.security_score(findings)
     if args.format == "hook":  # compact context for the SessionStart hook; silent when clean
@@ -337,7 +353,20 @@ def cmd_repo(args) -> int:
         else:
             print(out)
         return 1 if report.exceeds(findings, args.fail_on) else 0
-    emit(findings, args.format, notes, args.output, {"agent_security_score": score},
+    extra = {
+        "agent_security_score": score,
+        "coverage": coverage,
+        "risk_summary": engine.aggregate_risk(findings),
+    }
+    if args.format == "markdown":
+        out = report.to_markdown(findings, score)
+        out += "\\n\\nCoverage: " + ", ".join(f"{key}={value}" for key, value in sorted(coverage_counts.items()))
+        if args.output:
+            Path(args.output).write_text(out, encoding="utf-8")
+        else:
+            print(out)
+        return 1 if report.exceeds(findings, args.fail_on) else 0
+    emit(findings, args.format, notes, args.output, extra,
          redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
 
