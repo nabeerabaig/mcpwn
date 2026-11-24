@@ -12,10 +12,10 @@ jobs:
   compare:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout unchanged main baseline
+      - name: Checkout unchanged main baseline commit
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ef195dfd00627cf29e7ad17e3f11f5c97dca3c67
           path: baseline
       - name: Checkout upgrade branch
         uses: actions/checkout@v4
