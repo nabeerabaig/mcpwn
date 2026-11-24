@@ -34,7 +34,16 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list[int] | None
             if not isinstance(key, str):
                 yield (path, None, "non-string object key")
                 continue
-            yield from _walk_text(value, f"{path}.{key}", depth=depth + 1, budget=budget)
+            if key in ("properties", "$defs", "definitions") and isinstance(value, dict):
+                for property_name, property_value in value.items():
+                    if isinstance(property_name, str):
+                        yield (f"{path}.{key}.{property_name}#name", property_name, None)
+                    else:
+                        yield (f"{path}.{key}", None, "non-string schema property name")
+                    yield from _walk_text(property_value, f"{path}.{key}.{property_name}",
+                                           depth=depth + 2, budget=budget)
+            else:
+                yield from _walk_text(value, f"{path}.{key}", depth=depth + 1, budget=budget)
     elif isinstance(node, list):
         for index, value in enumerate(node):
             yield from _walk_text(value, f"{path}[{index}]", depth=depth + 1, budget=budget)
