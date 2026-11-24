@@ -93,6 +93,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
     sibling_names = sibling_names or set()
     ctx = dict(tool=tool.name, server=tool.server, source=tool.source)
     scanned, skipped, discovered = [], [], []
+    parameter_scan_limits = []
     texts = []
     errors = []
     try:
@@ -131,10 +132,21 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
                     break
                 suspicious_unicode.append({"location": loc, **character})
 
-    findings.extend(tier2.scan_param_names(tool.input_schema, tool=tool.name, server=tool.server, source=tool.source))
+    parameter_findings, parameter_limit = tier2.scan_param_names_with_status(
+        tool.input_schema, tool=tool.name, server=tool.server, source=tool.source
+    )
+    findings.extend(parameter_findings)
+    if parameter_limit:
+        parameter_scan_limits.append({"location": "inputSchema.properties", "reason": parameter_limit})
     if isinstance(tool.output_schema, dict):
-        findings.extend(tier2.scan_param_names(tool.output_schema, tool=tool.name, server=tool.server,
-                                                source=tool.source, root_path="outputSchema"))
+        parameter_findings, parameter_limit = tier2.scan_param_names_with_status(
+            tool.output_schema, tool=tool.name, server=tool.server,
+            source=tool.source, root_path="outputSchema"
+        )
+        findings.extend(parameter_findings)
+        if parameter_limit:
+            parameter_scan_limits.append({"location": "outputSchema.properties", "reason": parameter_limit})
+    skipped.extend(parameter_scan_limits)
 
     # A directive hidden in schema metadata (not the description) is more suspicious than in prose.
     for finding in findings:
