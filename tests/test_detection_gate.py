@@ -62,6 +62,16 @@ class DetectionGateTests(unittest.TestCase):
             self.assertIn("unsupported_cases", summary)
             self.assertTrue(all("coverage_status" in row for row in report["malicious"] + report["benign"]))
 
+    def test_benchmark_rejects_invalid_threshold(self):
+        for threshold in ("-0.1", "1.1", "nan", "inf"):
+            with self.subTest(threshold=threshold):
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "bench/benchmark.py"), "--threshold", threshold],
+                    capture_output=True, text=True, timeout=10
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("threshold must be finite", result.stderr)
+
     def test_invalid_baseline_fails_with_exit_two(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'baseline.json'
