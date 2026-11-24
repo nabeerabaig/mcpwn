@@ -63,6 +63,24 @@ class CoverageTests(unittest.TestCase):
         self.assertIn(coverage["status"], ("partially_scanned", "unsupported"))
         self.assertTrue(any("depth" in item["reason"] for item in coverage["fields_skipped"]))
 
+    def test_content_budget_is_shared_across_top_level_tool_fields(self):
+        tool = ToolDef(
+            "local", "lookup", "description text",
+            {"type": "object", "description": "input schema text"},
+            output_schema={"type": "object", "description": "output schema text"},
+            annotations={"title": "annotation text"},
+            meta={"note": "metadata text"},
+        )
+        with patch.object(engine, "MAX_TEXT_CHARS", 20):
+            _findings, coverage = engine.scan_tool_with_coverage(tool)
+        self.assertEqual(coverage["status"], "partially_scanned")
+        self.assertIn("name", coverage["scanned_locations"])
+        self.assertTrue(any("aggregate text size limit" in item["reason"]
+                            for item in coverage["fields_skipped"]))
+        # Once the single per-tool budget is exhausted, later roots are not traversed.
+        self.assertNotIn("outputSchema", coverage["scanned_locations"])
+        self.assertNotIn("annotations.title#key", coverage["scanned_locations"])
+
     def test_node_limit_stops_traversal_and_reports_unscanned_content(self):
         schema = {"enum": ["x"] * 1000}
         tool = ToolDef("local", "lookup", "Description", schema)
