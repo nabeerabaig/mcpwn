@@ -143,10 +143,17 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
             finding.rescore(finding.confidence + 0.05)
 
     findings = dedupe(findings)
-    semantic_applied = False
-    if use_llm and tier3.backend_available():
-        extra, semantic_applied = tier3.apply_with_status(tool, findings)
-        findings.extend(extra)
+    semantic_review_status = "not_requested"
+    semantic_review_disagreed = False
+    if use_llm:
+        if tier3.backend_available():
+            static_tier_two = any(finding.tier == 2 for finding in findings)
+            extra, semantic_review_status = tier3.apply_with_status(tool, findings)
+            semantic_review_disagreed = semantic_review_status == "benign" and static_tier_two
+            findings.extend(extra)
+        else:
+            semantic_review_status = "unavailable"
+    semantic_applied = semantic_review_status in ("flagged", "benign")
 
     total = len(discovered)
     scanned_count = len(scanned)
@@ -171,7 +178,10 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         "unsupported_fields": [item for item in skipped if "unsupported" in item["reason"] or "limit" in item["reason"]],
         "scan_errors": errors,
         "semantic_analysis_applied": semantic_applied,
+        "semantic_review_status": semantic_review_status,
+        "semantic_review_disagreed_with_static": semantic_review_disagreed,
         "dynamic_validation_performed": False,
+        "dynamic_validation_status": "not_requested",
         "discovered_locations": discovered,
         "scanned_locations": scanned,
         "normalized_fields": normalized_fields,
