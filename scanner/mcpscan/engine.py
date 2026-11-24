@@ -20,7 +20,7 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list[int] | None
         return
     budget[0] -= 1
     if depth > MAX_CONTENT_DEPTH:
-        yield (path, None, "maximum content depth exceeded")
+        yield (path, None, "maximum content depth limit exceeded")
         return
     if isinstance(node, str):
         if len(node) > budget[1]:
@@ -132,7 +132,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         "fields_discovered": total,
         "fields_scanned": scanned_count,
         "fields_skipped": skipped,
-        "unsupported_fields": [item for item in skipped if "unsupported" in item["reason"]],
+        "unsupported_fields": [item for item in skipped if "unsupported" in item["reason"] or "limit" in item["reason"]],
         "scan_errors": errors,
         "semantic_analysis_applied": semantic_applied,
         "dynamic_validation_performed": False,
