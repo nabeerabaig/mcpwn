@@ -42,7 +42,9 @@ def run(samples, use_dynamic, threshold):
     for (cat, name, *_), t in zip(samples, tools):
         fs = findings_by[t.name]
         top = max((f.confidence for f in fs), default=0.0)
-        results.append({"category": cat, "name": name, "top": top, "flagged": top >= threshold,
+        results.append({"category": cat, "name": name, "source_type": "mcp_tool_definition",
+                        "top": top, "flagged": top >= threshold,
+                        "tiers": sorted({f.tier for f in fs if f.confidence >= threshold}),
                         "rules": sorted({f.rule_id for f in fs if f.confidence >= threshold})})
     return results
 
@@ -61,9 +63,20 @@ def main():
     print(f"mode: {'static + dynamic' if a.dynamic else 'static'}   threshold: {a.threshold}")
     print(f"malicious: {len(mal)}  detected: {tp}  detection rate: {tp / len(mal):.1%}")
     print(f"benign:    {len(ben)}  flagged:  {fp}  false-positive rate: {fp / len(ben):.1%}")
-    flagged_total = tp + fp
-    if flagged_total:
-        print(f"precision: {tp / flagged_total:.1%}")
+    fn = len(mal) - tp
+    tn = len(ben) - fp
+    precision = tp / (tp + fp) if tp + fp else None
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if precision is not None and precision + recall else 0.0
+    print(f"confusion matrix: TP={tp} FP={fp} TN={tn} FN={fn}")
+    print(f"precision: {precision:.1%}" if precision is not None else "precision: n/a (no flagged samples)")
+    print(f"recall:    {recall:.1%}")
+    print(f"F1:        {f1:.1%}")
+    print("per-layer contribution (cases with a finding at threshold; layers may overlap):")
+    for tier in (1, 2, 3, 4, 5, 6):
+        hits = sum(tier in row["tiers"] for row in mal)
+        print(f"  tier {tier}: {hits}/{len(mal)} malicious cases")
+    print("source types:", "mcp_tool_definition across all current corpus cases")
     print("\nper-category detection:")
     cats = defaultdict(lambda: [0, 0])
     for r in mal:
@@ -82,8 +95,16 @@ def main():
         for r in fps:
             print(f"  - {r['category']}:{r['name']} (top confidence {r['top']}, rules {r['rules']})")
     if a.json:
-        with open(a.json, "w") as f:
-            json.dump({"malicious": mal, "benign": ben}, f, indent=2)
+        with open(a.json, "w", encoding="utf-8") as f:
+            json.dump({
+                "summary": {
+                    "true_positives": tp, "false_positives": fp,
+                    "true_negatives": tn, "false_negatives": fn,
+                    "precision": precision, "recall": recall, "f1": f1,
+                    "source_type": "mcp_tool_definition",
+                },
+                "malicious": mal, "benign": ben,
+            }, f, indent=2)
 
 
 if __name__ == "__main__":
