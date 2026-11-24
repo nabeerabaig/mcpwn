@@ -1,0 +1,92 @@
+name: Baseline versus security upgrade
+
+on:
+  push:
+    branches: [v0.3-security-upgrade]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout unchanged main baseline
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: baseline
+      - name: Checkout upgrade branch
+        uses: actions/checkout@v4
+        with:
+          ref: v0.3-security-upgrade
+          path: candidate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install optional config parser used by tests
+        run: python -m pip install PyYAML
+      - name: Baseline unit and integration tests
+        id: baseline-tests
+        continue-on-error: true
+        working-directory: baseline
+        run: python -m unittest discover -v -s tests
+      - name: Baseline static benchmark
+        id: baseline-benchmark
+        continue-on-error: true
+        working-directory: baseline
+        run: python bench/benchmark.py --json baseline-benchmark.json
+      - name: Upgrade unit and integration tests
+        id: candidate-tests
+        continue-on-error: true
+        working-directory: candidate
+        run: python -m unittest discover -v -s tests
+      - name: Upgrade static benchmark
+        id: candidate-benchmark
+        continue-on-error: true
+        working-directory: candidate
+        run: python bench/benchmark.py --json candidate-benchmark.json
+      - name: Compare results
+        if: always()
+        env:
+          BASELINE_TESTS: ${{ steps.baseline-tests.outcome }}
+          BASELINE_BENCHMARK: ${{ steps.baseline-benchmark.outcome }}
+          CANDIDATE_TESTS: ${{ steps.candidate-tests.outcome }}
+          CANDIDATE_BENCHMARK: ${{ steps.candidate-benchmark.outcome }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          outcomes = {
+              "main_tests": os.environ["BASELINE_TESTS"],
+              "main_benchmark": os.environ["BASELINE_BENCHMARK"],
+              "upgrade_tests": os.environ["CANDIDATE_TESTS"],
+              "upgrade_benchmark": os.environ["CANDIDATE_BENCHMARK"],
+          }
+          print("Execution outcomes:")
+          print(json.dumps(outcomes, indent=2))
+          for label, path in (
+              ("main", Path("baseline/baseline-benchmark.json")),
+              ("upgrade", Path("candidate/candidate-benchmark.json")),
+          ):
+              if path.exists():
+                  report = json.loads(path.read_text(encoding="utf-8"))
+                  print(f"{label} benchmark:")
+                  print(json.dumps(report.get("summary", {}), indent=2))
+              else:
+                  print(f"{label} benchmark report missing")
+          if any(value != "success" for value in outcomes.values()):
+              raise SystemExit("Baseline comparison failed; inspect the individual test and benchmark logs.")
+          PY
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-vs-upgrade-benchmarks
+          path: |
+            baseline/baseline-benchmark.json
+            candidate/candidate-benchmark.json
+          if-no-files-found: warn
