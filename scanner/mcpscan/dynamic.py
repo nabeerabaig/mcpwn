@@ -152,7 +152,7 @@ def confirm_tool(tool: ToolDef, findings: list[Finding], timeout: float = 30.0) 
 def apply(tools: list[ToolDef], findings: list[Finding], min_confidence: float = 0.4,
           timeout: float = 30.0) -> tuple[list[Finding], list[str], dict]:
     """Confirm or clear findings per tool. Returns (findings, notes, stats)."""
-    stats = {"confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0}
+    stats = {"confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0, "tested_tools": []}
     if backend_name() is None:
         return findings, ["dynamic: no agent backend configured (MCPSCAN_AGENT_CMD / MCPSCAN_OLLAMA_MODEL / ANTHROPIC_API_KEY); skipped"], stats
     notes: list[str] = []
@@ -165,6 +165,7 @@ def apply(tools: list[ToolDef], findings: list[Finding], min_confidence: float =
         if not group or max(f.confidence for f in group) < min_confidence:
             continue
         stats["tools_tested"] += 1
+        stats["tested_tools"].append(f"{t.server}/{t.name}")
         verdict, reasons = confirm_tool(t, group, timeout)
         stats[verdict] += 1
         if verdict == "confirmed":
