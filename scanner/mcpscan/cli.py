@@ -10,7 +10,7 @@ from pathlib import Path
 from . import chains as chains_mod
 from . import audit_html, dynamic, engine, pinning, portfolio, proxy, report, repo_files, sandbox, snapshot, tier3
 from .discovery import CLIENTS, discover
-from .mcp_client import McpError, fetch_tools
+from .mcp_client import McpError, fetch_inventory, fetch_tools
 from .models import Finding, ServerSpec, ToolDef, SEVERITY_ORDER, validate_tool_raw
 
 
@@ -27,7 +27,7 @@ def _unique_json_fields(pairs):
     return result
 
 
-def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolDef], list[str]]:
+def collect_tools(args, *, captured: set[str] | None = None, protocol_surfaces: list[dict] | None = None) -> tuple[list[ToolDef], list[str]]:
     notes: list[str] = []
     tools: list[ToolDef] = []
     if getattr(args, "tools_json", None):
@@ -58,6 +58,13 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
                         raise CaptureError("snapshot contains an empty server name")
                     captured.add(sname)
                 tools.extend(ToolDef.from_mcp(sname, t, str(path)) for t in lst)
+                if protocol_surfaces is not None:
+                    for surface in ("prompts", "resources", "resource_templates"):
+                        protocol_surfaces.append({
+                            "server": sname, "source": str(path), "surface": surface,
+                            "status": "not_in_snapshot", "items": [], "items_discovered": 0,
+                            "reason": "offline tool snapshot does not contain this MCP protocol surface",
+                        })
         if captured is not None:
             if not set(getattr(args, "only", None) or ()).issubset(captured):
                 raise CaptureError("one or more requested servers were not present in the inputs")
@@ -89,7 +96,11 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
                     notes.append(f"{s.name}: FAILED (--sandbox docker requested but docker is not installed)")
                     continue
                 s = sandbox.wrap(s, args.sandbox_image, args.sandbox_network)
-            got = fetch_tools(s, args.timeout)
+            if protocol_surfaces is None:
+                got = fetch_tools(s, args.timeout)
+            else:
+                got, extra_surfaces = fetch_inventory(s, args.timeout)
+                protocol_surfaces.extend(extra_surfaces)
             tools.extend(got)
             if captured is not None:
                 captured.add(s.name)
@@ -101,9 +112,9 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
     return tools, notes
 
 
-def _collect_for_command(args, captured: set[str] | None):
+def _collect_for_command(args, captured: set[str] | None, protocol_surfaces: list[dict] | None = None):
     try:
-        return collect_tools(args, captured=captured)
+        return collect_tools(args, captured=captured, protocol_surfaces=protocol_surfaces)
     except CaptureError as exc:
         print(f"{args.cmd}: {exc}", file=sys.stderr)
     except (OSError, ValueError, RecursionError):
@@ -125,18 +136,25 @@ def emit(findings: list[Finding], fmt: str, notes: list[str], output: str | None
 
 
 def cmd_scan(args) -> int:
-    result = _collect_for_command(args, set() if args.strict else None)
+    protocol_surfaces: list[dict] = []
+    result = _collect_for_command(args, set() if args.strict else None, protocol_surfaces)
     if result is None:
         return 2
     tools, notes = result
     if args.llm and not tier3.backend_available():
         notes.append("--llm requested but no backend configured (set MCPSCAN_LLM_CMD or ANTHROPIC_API_KEY); Tier 3 skipped")
     findings, coverage = engine.scan_tools_with_coverage(tools, use_llm=args.llm)
+    surface_findings, surface_coverage = engine.scan_protocol_surfaces(protocol_surfaces, use_llm=args.llm)
+    findings.extend(surface_findings)
+    coverage.extend(surface_coverage)
+    findings.sort(key=lambda finding: -finding.confidence)
     extra = {
         "tools_scanned": len(tools),
         "coverage": coverage,
         "not_scanned_protocol_surfaces": [
-            "prompts", "prompt arguments", "resources", "resource templates"
+            "prompt bodies and prompt argument values (prompts/list metadata only)",
+            "resource contents and resource-template contents (resources/list metadata only)",
+            "resource reads and prompt invocations are never performed by scan",
         ],
     }
     if notes and args.format != "text" and not args.redact_evidence:
@@ -174,7 +192,8 @@ def cmd_scan(args) -> int:
         notes.append("coverage: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
         notes.append(f"coverage fields: {sum(r['fields_scanned'] for r in coverage)} scanned / "
                      f"{sum(r['fields_discovered'] for r in coverage)} discovered")
-        notes.append("not queried by this tools/list scanner: prompts, prompt arguments, resources, resource templates")
+        notes.append("protocol metadata inventoried where advertised: prompts/list, resources/list, resources/templates/list")
+        notes.append("not fetched or invoked: prompt bodies/values, resource contents, resource reads")
     findings = report.filter_min(findings, args.min_confidence)
     extra["risk_summary"] = engine.aggregate_risk(findings)
     emit(findings, args.format, notes, args.output, extra, redact_evidence=args.redact_evidence)
