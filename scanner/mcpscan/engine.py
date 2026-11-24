@@ -38,7 +38,9 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list[int] | None
     elif isinstance(node, list):
         for index, value in enumerate(node):
             yield from _walk_text(value, f"{path}[{index}]", depth=depth + 1, budget=budget)
-    elif node is not None and not isinstance(node, (bool, int, float)):
+    elif node is not None and isinstance(node, (bool, int, float)):
+        yield (path, None, "not applicable: non-text scalar")
+    elif node is not None:
         yield (path, None, f"unsupported value type: {type(node).__name__}")
 
 
