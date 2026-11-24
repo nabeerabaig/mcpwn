@@ -162,7 +162,7 @@ def apply(tools: list[ToolDef], findings: list[Finding], min_confidence: float =
           timeout: float = 30.0) -> tuple[list[Finding], list[str], dict]:
     """Confirm or clear findings per tool. Returns (findings, notes, stats)."""
     stats = {"confirmed": 0, "cleared": 0, "inconclusive": 0, "tools_tested": 0,
-             "tested_tools": [], "backend": backend_name()}
+             "tested_tools": [], "tool_verdicts": {}, "backend": backend_name()}
     if backend_name() is None:
         return findings, ["dynamic: no agent backend configured (MCPSCAN_AGENT_CMD / MCPSCAN_OLLAMA_MODEL / ANTHROPIC_API_KEY); skipped"], stats
     notes: list[str] = []
@@ -177,6 +177,7 @@ def apply(tools: list[ToolDef], findings: list[Finding], min_confidence: float =
         stats["tools_tested"] += 1
         stats["tested_tools"].append(f"{t.server}/{t.name}")
         verdict, reasons = confirm_tool(t, group, timeout)
+        stats["tool_verdicts"][f"{t.server}/{t.name}"] = verdict
         stats[verdict] += 1
         if verdict == "confirmed":
             extra.append(Finding("D-CONFIRMED", 6, "Confirmed by sandbox: description changed agent behavior",
