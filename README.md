@@ -24,13 +24,15 @@ A `SessionStart` hook runs a quiet static repo scan and only speaks up if it fin
 
 ## Scan coverage and boundaries
 
-The MCP tool scan now emits a per-tool coverage record in JSON output. It records discovered and scanned text fields, skipped or unsupported values, scan status, whether Tier 3 produced a semantic finding, and whether dynamic validation actually tested that tool. Text output includes a compact coverage summary.
+The scan emits per-source coverage records in JSON output. Each record tracks discovered and scanned text fields, skipped or unsupported values, scan status, semantic-review outcome, and whether dynamic validation actually tested the source. Text output includes a compact coverage summary.
 
 For tool definitions, the scanner inspects names, descriptions, input schemas, output schemas, annotations, `_meta`, metadata values, and string-valued metadata keys preserved from the server response. General metadata traversal and schema parameter-name analysis have explicit depth, node-count, and text-size limits. Values that are not text are recorded as not applicable rather than being counted as successfully scanned. Unsupported values and exceeded limits are reported.
 
 Text is analyzed in its original form and, when NFKC changes it, in a normalized analysis representation as well. The original source remains the evidence shown in findings. Suspicious format, surrogate, and private-use Unicode characters are separately recorded with their code points and source locations; normalization does not silently delete them.
 
-**Important protocol boundary:** the live collector currently requests `tools/list` only. It does not collect or claim to scan MCP prompts, prompt arguments, resources, or resource templates. JSON coverage output lists these unqueried surfaces explicitly. A successful tool-definition scan is not a complete MCP-server audit.
+For live servers, the collector requests `tools/list` and, where the server advertises the relevant capabilities, `prompts/list`, `resources/list`, and `resources/templates/list`. Prompt descriptions and argument metadata, resource descriptors, and resource-template descriptors are scanned. If a server does not advertise a capability, a method is unsupported, collection fails, or an offline tool-only snapshot omits the surface, the coverage record states that explicitly.
+
+**Important protocol boundary:** scans do not invoke prompts, retrieve prompt messages or argument values, call `resources/read`, or fetch resource contents. They analyze descriptors only. A successful descriptor scan is not a complete audit of the behavior or content behind a server.
 
 The optional Tier 3 reviewer receives the preserved tool metadata, but remains advisory. A missing backend, invalid response, timeout, or inconclusive response is not counted as a completed semantic review.
 
@@ -38,7 +40,7 @@ The optional Tier 3 reviewer receives the preserved tool metadata, but remains a
 
 1. **Tier 1, structural:** zero-width / bidi / tag Unicode (tag characters are decoded), base64 payloads (decoded and re-scanned), override and concealment phrases.
 2. **Tier 2, contextual:** sensitive paths, secrets, exfiltration and execution phrasing. Only *directive* language aimed at the agent scores high; descriptive text ("Reads a file") and same-server dependency docs ("call list_files first") stay below warning. Instruction-like parameter names.
-3. **Tier 3, LLM (opt-in, `--llm`):** `MCPSCAN_LLM_CMD` (stdin JSON, stdout JSON) or `ANTHROPIC_API_KEY` (+ optional `MCPSCAN_LLM_MODEL`). Can lower Tier 2 findings it judges benign; can never clear Tier 1 hits.
+3. **Tier 3, LLM (opt-in, `--llm`):** `MCPSCAN_LLM_CMD` (stdin JSON, stdout JSON) or `ANTHROPIC_API_KEY` (+ optional `MCPSCAN_LLM_MODEL`). Reviews serialized tool and supported protocol-descriptor metadata. It is advisory, may lower Tier 2 confidence when it returns a valid benign verdict, and never clears Tier 1 findings. Inconclusive or unavailable review is reported rather than counted as a benign result.
 
 Severity: confidence >= 0.8 critical, >= 0.5 warning, otherwise info.
 
@@ -154,7 +156,7 @@ Static engine on `bench/corpus.py`, a corpus I wrote (52 malicious incl. hard se
 
 **Read this carefully:** this is *not* the AppSecSanta/Cisco audit set, which I did not have, so the "<10% FP vs 78%" comparison has not been made. The detectors were also iterated while looking at this corpus, so the numbers are optimistic. Treat them as a regression baseline, not evidence of real-world accuracy. No real LLM was run for Tier 3 or dynamic mode; dynamic mode is tested only with a deterministic mock agent.
 
-The benchmark JSON now includes TP/FP/TN/FN, precision, recall, F1, per-tier contributions, and scan-coverage counts. These metrics describe only the included corpus and are not calibrated probabilities.
+The benchmark JSON now includes TP/FP/TN/FN, precision, recall, F1, per-tier contributions, and scan-coverage counts. These metrics describe only the included corpus and are not calibrated probabilities. The current development corpus is tool-definition-only, so it does not measure prompt/resource descriptor coverage.
 
 A separate frozen, 12-case author-curated evaluation set is in [holdout-v1.json](bench/holdout-v1.json). Run `python3 bench/evaluate_holdout.py --json` to report its results. It is kept separate from the development corpus and is not used to tune detector rules. It is not independently sourced or independently validated, so it must not be presented as proof of real-world accuracy. Keep it frozen; create a new version for future cases rather than silently changing its labels or examples. Its initial threshold-0.5 result is **3/6 malicious detected, 1/6 benign flagged, precision 75%, recall 50%, F1 60%**. This small result is useful for exposing gaps, not for claiming accuracy; do not tune against this frozen set.
 
