@@ -22,6 +22,10 @@ class McpError(Exception):
     pass
 
 
+class McpMethodNotFound(McpError):
+    pass
+
+
 class StdioSession:
     def __init__(self, spec: ServerSpec, timeout: float = 15.0):
         self.spec = spec
@@ -88,7 +92,10 @@ class StdioSession:
                 raise McpError("server exited before responding")
             if msg.get("id") == rid:
                 if "error" in msg:
-                    raise McpError(f"{method} error: {msg['error']}")
+                    error = msg["error"]
+                    if isinstance(error, dict) and error.get("code") == -32601:
+                        raise McpMethodNotFound(f"{method} is not supported by this server")
+                    raise McpError(f"{method} error: {error}")
                 return msg.get("result") or {}
 
     def close(self) -> None:
@@ -142,6 +149,68 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
             raise McpError("tools/list repeated a pagination cursor")
         cursors.add(cursor)
     raise McpError(f"tools/list exceeded the {MAX_TOOL_PAGES}-page limit")
+
+
+def _list_collection(request, method: str, key: str) -> list[dict]:
+    """Collect one paginated MCP metadata collection without returning partial results."""
+    items: list[dict] = []
+    cursors: set[str] = set()
+    identities: set[str] = set()
+    cursor = None
+    for _ in range(MAX_TOOL_PAGES):
+        result = request(method, {"cursor": cursor} if cursor is not None else {})
+        if not isinstance(result, dict) or not isinstance(result.get(key), list):
+            raise McpError(f"{method} result must contain a {key} array")
+        for item in result[key]:
+            if not isinstance(item, dict):
+                raise McpError(f"{method} contains a non-object entry")
+            identity = item.get("name") or item.get("uri") or item.get("uriTemplate")
+            if not isinstance(identity, str) or not identity.strip():
+                raise McpError(f"{method} entry is missing a valid name or URI")
+            if identity in identities:
+                raise McpError(f"{method} contains duplicate entries")
+            identities.add(identity)
+            items.append(item)
+            if len(items) > MAX_TOOL_COUNT:
+                raise McpError(f"{method} exceeded the {MAX_TOOL_COUNT}-item inventory limit")
+        cursor = result.get("nextCursor")
+        if cursor is None:
+            return items
+        if not isinstance(cursor, str) or not cursor:
+            raise McpError(f"{method} nextCursor must be a nonempty string")
+        if cursor in cursors:
+            raise McpError(f"{method} repeated a pagination cursor")
+        cursors.add(cursor)
+    raise McpError(f"{method} exceeded the {MAX_TOOL_PAGES}-page limit")
+
+
+def _collect_protocol_surfaces(server: str, source: str, capabilities: dict, request) -> list[dict]:
+    """Inventory advertised descriptors only; never read resource bodies or invoke prompts."""
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    resources_advertised = isinstance(capabilities.get("resources"), dict)
+    prompts_advertised = isinstance(capabilities.get("prompts"), dict)
+    definitions = (
+        ("prompts", "prompts/list", "prompts", prompts_advertised),
+        ("resources", "resources/list", "resources", resources_advertised),
+        ("resource_templates", "resources/templates/list", "resourceTemplates", resources_advertised),
+    )
+    records = []
+    for surface, method, key, advertised in definitions:
+        record = {"server": server, "source": source, "surface": surface,
+                  "status": "not_advertised", "items": [], "items_discovered": 0,
+                  "reason": "server did not advertise this capability"}
+        if not advertised:
+            records.append(record)
+            continue
+        try:
+            items = _list_collection(request, method, key)
+            record.update(status="scanned", items=items, items_discovered=len(items), reason="")
+        except McpMethodNotFound as exc:
+            record.update(status="unsupported", reason=str(exc))
+        except McpError as exc:
+            record.update(status="failed", reason=str(exc))
+        records.append(record)
+    return records
 
 
 def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
