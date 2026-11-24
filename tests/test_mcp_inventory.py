@@ -49,6 +49,50 @@ for line in sys.stdin:
             with self.assertRaisesRegex(mcp_client.McpError, 'page limit'):
                 mcp_client._list_tools(spec, lambda *_: {'tools': [{'name': 'one'}], 'nextCursor': 'next'})
 
+    def test_protocol_surface_inventory_queries_only_advertised_lists(self):
+        called = []
+
+        def request(method, params):
+            called.append(method)
+            if method == "prompts/list":
+                return {"prompts": [{"name": "summary", "description": "Creates a report."}]}
+            if method == "resources/list":
+                return {"resources": [{"name": "notes", "uri": "file:///notes.txt",
+                                       "description": "Project notes."}]}
+            if method == "resources/templates/list":
+                raise mcp_client.McpMethodNotFound("resources/templates/list unsupported")
+            self.fail(f"Unexpected method: {method}")
+
+        surfaces = mcp_client._collect_protocol_surfaces(
+            "local", "config.json", {"prompts": {}, "resources": {}}, request
+        )
+        self.assertEqual(called, ["prompts/list", "resources/list", "resources/templates/list"])
+        statuses = {record["surface"]: record["status"] for record in surfaces}
+        self.assertEqual(statuses, {
+            "prompts": "scanned", "resources": "scanned", "resource_templates": "unsupported"
+        })
+        self.assertEqual(surfaces[0]["items_discovered"], 1)
+        self.assertEqual(surfaces[1]["items"][0]["uri"], "file:///notes.txt")
+
+    def test_unadvertised_protocol_surfaces_are_not_queried(self):
+        def request(*_args):
+            self.fail("An unadvertised protocol surface must not be queried")
+        surfaces = mcp_client._collect_protocol_surfaces("local", "", {}, request)
+        self.assertEqual([record["status"] for record in surfaces],
+                         ["not_advertised", "not_advertised", "not_advertised"])
+
+    def test_protocol_list_collection_rejects_duplicate_and_partial_pages(self):
+        with self.assertRaisesRegex(mcp_client.McpError, "duplicate"):
+            mcp_client._list_collection(
+                lambda *_: {"prompts": [{"name": "one"}, {"name": "one"}]},
+                "prompts/list", "prompts"
+            )
+        with self.assertRaisesRegex(mcp_client.McpError, "repeated"):
+            mcp_client._list_collection(
+                lambda *_: {"resources": [], "nextCursor": "same"},
+                "resources/list", "resources"
+            )
+
     def test_invalid_page_and_duplicate_names_are_rejected(self):
         cases = [({}, 'tools array'), ({'tools': [42]}, 'valid name'),
                  ({'tools': [{'name': 'one', 'description': 7}]}, 'description'),
