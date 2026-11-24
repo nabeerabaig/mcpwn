@@ -52,6 +52,9 @@ for line in sys.stdin:
     def test_invalid_page_and_duplicate_names_are_rejected(self):
         cases = [({}, 'tools array'), ({'tools': [42]}, 'valid name'),
                  ({'tools': [{'name': 'one', 'inputSchema': []}]}, 'inputSchema'),
+                 ({'tools': [{'name': 'one', 'outputSchema': []}]}, 'outputSchema'),
+                 ({'tools': [{'name': 'one', 'annotations': []}]}, 'annotations'),
+                 ({'tools': [{'name': 'one', '_meta': []}]}, '_meta'),
                  ({'tools': [{'name': 'one'}, {'name': 'one'}]}, 'duplicate'),
                  ({'tools': [], 'nextCursor': 1}, 'nextCursor')]
         for response, error in cases:
