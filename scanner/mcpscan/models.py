@@ -82,7 +82,7 @@ class ToolDef:
         if self.meta:
             result["_meta"] = self.meta
         if self.extra:
-            result["extra"] = self.extra
+            result.update(self.extra)
         return result
 
 
