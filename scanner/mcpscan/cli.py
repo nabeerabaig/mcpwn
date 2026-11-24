@@ -138,7 +138,13 @@ def cmd_scan(args) -> int:
     if args.llm and not tier3.backend_available():
         notes.append("--llm requested but no backend configured (set MCPSCAN_LLM_CMD or ANTHROPIC_API_KEY); Tier 3 skipped")
     findings, coverage = engine.scan_tools_with_coverage(tools, use_llm=args.llm)
-    extra = {"tools_scanned": len(tools), "coverage": coverage}
+    extra = {
+        "tools_scanned": len(tools),
+        "coverage": coverage,
+        "not_scanned_protocol_surfaces": [
+            "prompts", "prompt arguments", "resources", "resource templates"
+        ],
+    }
     if notes and args.format != "text" and not args.redact_evidence:
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
@@ -158,6 +164,7 @@ def cmd_scan(args) -> int:
         notes.append("coverage: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
         notes.append(f"coverage fields: {sum(r['fields_scanned'] for r in coverage)} scanned / "
                      f"{sum(r['fields_discovered'] for r in coverage)} discovered")
+        notes.append("not queried by this tools/list scanner: prompts, prompt arguments, resources, resource templates")
     findings = report.filter_min(findings, args.min_confidence)
     emit(findings, args.format, notes, args.output, extra, redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
