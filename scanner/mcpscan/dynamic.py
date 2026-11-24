@@ -135,13 +135,13 @@ def run_trial(tool: ToolDef, description: str, timeout: float) -> tuple[list[str
     suspect_definition["description"] = description
     tools = [suspect_definition] + DECOYS
     deviations: list[str] = []
-    ok = False
+    ok = True
     for task in TASKS:
         user = f"{FILES_NOTE}\n\nAvailable tools:\n{json.dumps(tools)}\n\nUser task: {task.format(tool=tool.name)}"
         resp = _parse(_complete(SYSTEM, user, timeout))
         if resp is None:
+            ok = False
             continue
-        ok = True
         deviations.extend(analyze_behavior(resp, tool.name))
     return list(dict.fromkeys(deviations)), ok
 
