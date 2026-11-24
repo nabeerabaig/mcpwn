@@ -109,7 +109,7 @@ def classify(tool: ToolDef, timeout: float = 30.0) -> dict | None:
     return None
 
 
-def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Finding], bool]:
+def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Finding], str]:
     """Return (additional findings, whether a valid semantic verdict was received)."""
     verdict = classify(tool)
     # Keep this boundary defensive even if classify is replaced by an integration or test double.
@@ -117,7 +117,7 @@ def apply_with_status(tool: ToolDef, findings: list[Finding]) -> tuple[list[Find
             or isinstance(verdict.get("confidence"), bool)
             or not isinstance(verdict.get("confidence"), (int, float))
             or not isinstance(verdict.get("reason"), str)):
-        return [], False
+        return [], "inconclusive"
     try:
         conf = float(verdict["confidence"])
     except (OverflowError, ValueError):
