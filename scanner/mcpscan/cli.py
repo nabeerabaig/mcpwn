@@ -154,8 +154,19 @@ def cmd_scan(args) -> int:
         if not args.redact_evidence:
             extra["dynamic"] = stats
         tested = set(stats.get("tested_tools", []))
+        verdicts = stats.get("tool_verdicts", {})
         for record in coverage:
-            record["dynamic_validation_performed"] = record["source_id"] in tested
+            source_id = record["source_id"]
+            outcome = verdicts.get(source_id)
+            record["dynamic_validation_performed"] = outcome is not None
+            if outcome is not None:
+                record["dynamic_validation_status"] = outcome
+            elif stats.get("backend") is None:
+                record["dynamic_validation_status"] = "unavailable"
+            elif source_id in tested:
+                record["dynamic_validation_status"] = "inconclusive"
+            else:
+                record["dynamic_validation_status"] = "not_selected"
         findings.sort(key=lambda f: -f.confidence)
     if args.format == "text":
         counts = {}
