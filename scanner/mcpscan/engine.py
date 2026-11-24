@@ -140,8 +140,11 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
                     break
                 suspicious_unicode.append({"location": loc, **character})
 
+    # Parameter-name checks share one independent budget across input and output schemas.
+    parameter_budget = [20000, 1_000_000]
     parameter_findings, parameter_limit = tier2.scan_param_names_with_status(
-        tool.input_schema, tool=tool.name, server=tool.server, source=tool.source
+        tool.input_schema, tool=tool.name, server=tool.server, source=tool.source,
+        budget=parameter_budget
     )
     findings.extend(parameter_findings)
     if parameter_limit:
@@ -149,7 +152,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
     if isinstance(tool.output_schema, dict):
         parameter_findings, parameter_limit = tier2.scan_param_names_with_status(
             tool.output_schema, tool=tool.name, server=tool.server,
-            source=tool.source, root_path="outputSchema"
+            source=tool.source, root_path="outputSchema", budget=parameter_budget
         )
         findings.extend(parameter_findings)
         if parameter_limit:
