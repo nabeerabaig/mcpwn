@@ -29,6 +29,8 @@ def _is_hidden(ch: str) -> str | None:
         return "BIDI CONTROL"
     if 0xFE00 <= cp <= 0xFE0F:
         return "VARIATION SELECTOR"
+    if unicodedata.category(ch) == "Cf":
+        return unicodedata.name(ch, "FORMAT CONTROL")
     return None
 
 
@@ -42,29 +44,60 @@ def decode_tag_chars(text: str) -> str:
     return "".join(out)
 
 
+_GAP = r"[^.]{0,40}"
 OVERRIDE_PATTERNS = [
-    (r"\b(ignore|disregard|forget|override)\b[^.\n]{0,30}\b(previous|prior|above|earlier|all|any)\b[^.\n]{0,30}\b(instructions?|prompts?|rules|directions?|context)\b", "instruction-override", 0.9),
-    (r"\byou (are|will) now\b[^.\n]{0,40}\b(act|behave|operate|function|an?|the)\b", "role-reassignment", 0.6),
+    (rf"\b(ignore|disregard|forget|override)\b{_GAP}\b(previous|prior|above|earlier|all|any)\b{_GAP}\b(instructions?|prompts?|rules|directions?|context)\b", "instruction-override", 0.9),
+    (rf"\b(this|these|document|configuration|file)\b{_GAP}\b(claims?|has|takes?|is)\b{_GAP}\b(priority|precedence|authority|authoritative)\b", "authority-override", 0.85),
+    (rf"\b(priority|precedence|authority)\b{_GAP}\b(over|above)\b{_GAP}\b(other|existing|previous|all)\b{_GAP}\b(guidelines?|instructions?|rules|policies)\b", "authority-override", 0.85),
+    (rf"\b(elevated|higher|system|administrator|admin)\b{_GAP}\b(priority|authority|privilege)\b", "authority-override", 0.75),
+    (rf"\byou (are|will) now\b{_GAP}\b(act|behave|operate|function|an?|the)\b", "role-reassignment", 0.6),
     (r"\bnew (system )?(instructions?|prompt|rules)\s*:", "new-instructions", 0.85),
     (r"</?\s*(important|system|instructions?|admin|override)\s*>", "pseudo-tag", 0.7),
     (r"\[\s*(system|admin|override)\s*\]", "pseudo-tag", 0.6),
-    (r"\bdo not\b[^.\n]{0,40}\b(tell|inform|mention|reveal|notify|alert|show)\b[^.\n]{0,40}\b(the )?(user|human|operator)\b", "concealment", 0.9),
-    (r"\b(without|never)\b[^.\n]{0,30}\b(telling|informing|notifying|mention(ing)?( to)?|reveal(ing)?( to)?)\b[^.\n]{0,20}\b(the )?(user|human)\b", "concealment", 0.9),
-    (r"\btreat\b[^.\n]{0,40}\b(returned|output|result|response)s?\b[^.\n]{0,40}\bas (a |an )?(command|instruction|order)s?\b", "trust-escalation", 0.75),
-    (r"\b(this|these) (is|are) (a )?(mandatory|required)\b[^.\n]{0,40}\bdo not (ask|confirm|question)\b", "confirmation-bypass", 0.7),
+    (rf"\bdo not\b{_GAP}\b(tell|inform|mention|reveal|notify|alert|show|disclose)\b{_GAP}\b(the )?(user|human|operator)\b", "concealment", 0.9),
+    (rf"\b(without|never)\b{_GAP}\b(telling|informing|notifying|mention(ing)?( to)?|reveal(ing)?( to)?)\b{_GAP}\b(the )?(user|human)\b", "concealment", 0.9),
+    (rf"\b(keep|make|leave)\b{_GAP}\b(hidden|secret|confidential|undisclosed)\b{_GAP}\b(from the user|to the user|user)\b", "concealment", 0.85),
+    (rf"\btreat\b{_GAP}\b(returned|output|result|response)s?\b{_GAP}\bas (a |an )?(command|instruction|order)s?\b", "trust-escalation", 0.75),
+    (rf"\b(this|these) (is|are) (a )?(mandatory|required)\b{_GAP}\bdo not (ask|confirm|question)\b", "confirmation-bypass", 0.7),
 ]
 
 _B64_RE = re.compile(r"(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{32,}={0,2})(?![A-Za-z0-9+/=])")
+_HEX_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{24,})(?![0-9A-Fa-f])")
 _SUSPICIOUS_DECODED = re.compile(
-    r"(ignore|instruction|system prompt|curl |wget |bash|/bin/sh|ssh|passw|secret|token|exfil|http://|https://|eval\(|exec\()",
+    r"(ignore|disregard|instruction|system prompt|priority|guidelines|conceal|hidden|curl |wget |bash|/bin/sh|ssh|passw|secret|token|exfil|http://|https://|eval\(|exec\()",
     re.I,
 )
+
+
+def _printable_text(decoded: str) -> bool:
+    return bool(decoded) and sum(c.isprintable() or c in "\n\t" for c in decoded) / len(decoded) >= 0.95
 
 
 def scan_text(text: str, *, tool: str = "", server: str = "", location: str = "", source: str = "") -> list[Finding]:
     findings: list[Finding] = []
     if not text:
-        return findings
+    
+    # Hex payloads: decode only bounded, even-length, printable UTF-8 candidates.
+    for m in _HEX_RE.finditer(text):
+        blob = m.group(1)
+        if len(blob) % 2:
+            continue
+        try:
+            decoded = bytes.fromhex(blob).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not _printable_text(decoded) or not _SUSPICIOUS_DECODED.search(decoded):
+            continue
+        findings.append(mk("T1-HEX-PAYLOAD", "Hex-encoded instruction payload",
+                           "Hexadecimal content decodes to text containing instruction/security keywords.",
+                           0.9, blob))
+        decoded_findings = scan_text(decoded, tool=tool, server=server,
+                                      location=location + "#hex", source=source)[:3]
+        for finding in decoded_findings:
+            finding.evidence = blob
+            finding.message += " Detected in decoded hexadecimal content; original encoded evidence is preserved."
+        findings.extend(decoded_findings)
+    return findings
 
     def mk(rule, title, msg, conf, evidence=""):
         return Finding(
@@ -98,8 +131,10 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
 
     # override phrases
     lowered = unicodedata.normalize("NFKC", text)
+    analysis = "".join(ch for ch in lowered if unicodedata.category(ch) != "Cf")
+    analysis = re.sub(r"\s+", " ", analysis)
     for pat, name, conf in OVERRIDE_PATTERNS:
-        m = re.search(pat, lowered, re.I)
+        m = re.search(pat, analysis, re.I)
         if m:
             matched = m.group(0)
             original_evidence = matched if matched in text else text[:200]
@@ -107,7 +142,7 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
             findings.append(mk(f"T1-{name.upper()}", f"Injection phrase: {name}",
                                f"Text matches '{name}' pattern.{note}", conf, original_evidence))
 
-    # base64 payloads
+    # Base64 payloads
     for m in _B64_RE.finditer(text):
         blob = m.group(1)
         try:
@@ -115,7 +150,7 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
             decoded = raw.decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
             continue
-        if not decoded or sum(c.isprintable() or c in "\n\t" for c in decoded) / len(decoded) < 0.95:
+        if not _printable_text(decoded):
             continue
         if _SUSPICIOUS_DECODED.search(decoded):
             findings.append(mk("T1-BASE64-PAYLOAD", "Base64-encoded instruction payload",
