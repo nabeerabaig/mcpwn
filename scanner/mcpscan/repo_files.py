@@ -37,7 +37,7 @@ SHELL_DIRECTIVE = re.compile(
     r"(`[^`\n]*\b(curl|wget|nc|ncat|bash|sh|powershell|python -c|node -e|eval|base64 -d)\b[^`\n]*`|"
     r"\b(curl|wget)\b[^\n]*\|\s*(ba)?sh\b)", re.I)
 HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.S)
-MD_LINK_REF = re.compile(r"^\s*\[[^\]]+\]:\s*#\s*\\((.*?)\\)", re.M)
+MD_LINK_REF = re.compile(r"^\s*\[[^\]]+\]:\s*#\s*\((.*?)\)", re.M)
 AUTO_APPROVE = re.compile(r"\b(auto[- ]?approve|without (asking|confirmation|approval)|never ask (for )?(confirmation|permission)|"
                           r"disable (the )?(safety|confirmation)|--dangerously-skip-permissions|yolo mode)\b", re.I)
 
