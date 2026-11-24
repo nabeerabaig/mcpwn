@@ -33,13 +33,13 @@ PATTERNS = [
 ]
 
 SHELL_DIRECTIVE = re.compile(
-    r"(?:\\b(always|must|should|first|before|automatically|silently)\\b[^.\\n]{0,80})?"
-    r"(`[^`\\n]*\\b(curl|wget|nc|ncat|bash|sh|powershell|python -c|node -e|eval|base64 -d)\\b[^`\\n]*`|"
-    r"\\b(curl|wget)\\b[^\\n]*\\|\\s*(ba)?sh\\b)", re.I)
+    r"(?:\b(always|must|should|first|before|automatically|silently)\b[^.\n]{0,80})?"
+    r"(`[^`\n]*\b(curl|wget|nc|ncat|bash|sh|powershell|python -c|node -e|eval|base64 -d)\b[^`\n]*`|"
+    r"\b(curl|wget)\b[^\n]*\|\s*(ba)?sh\b)", re.I)
 HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.S)
-MD_LINK_REF = re.compile(r"^\\s*\\[[^\\]]+\\]:\\s*#\\s*\\((.*?)\\)", re.M)
-AUTO_APPROVE = re.compile(r"\\b(auto[- ]?approve|without (asking|confirmation|approval)|never ask (for )?(confirmation|permission)|"
-                          r"disable (the )?(safety|confirmation)|--dangerously-skip-permissions|yolo mode)\\b", re.I)
+MD_LINK_REF = re.compile(r"^\s*\[[^\]]+\]:\s*#\s*\\((.*?)\\)", re.M)
+AUTO_APPROVE = re.compile(r"\b(auto[- ]?approve|without (asking|confirmation|approval)|never ask (for )?(confirmation|permission)|"
+                          r"disable (the )?(safety|confirmation)|--dangerously-skip-permissions|yolo mode)\b", re.I)
 
 
 def find_files(root: Path) -> list[Path]:
@@ -72,7 +72,7 @@ def _scan_decoded_text(text: str, path: Path, relative: str) -> list[Finding]:
 
     match = SHELL_DIRECTIVE.search(text)
     if match:
-        piped = bool(re.search(r"\\|\\s*(ba)?sh\\b", match.group(0)))
+        piped = bool(re.search(r"\|\s*(ba)?sh\b", match.group(0)))
         out.append(make(
             "T5-SHELL-IN-RULES", "Shell command embedded in agent rules",
             "Agent instruction file embeds a shell command the agent may be induced to run (AIShellJack pattern).",
@@ -142,7 +142,7 @@ def scan_file_with_coverage(path: Path, root: Path | None = None) -> tuple[list[
         record["fields_skipped"].append({"location": "file", "reason": "file is not valid UTF-8"})
         return [], record
 
-    if "\\x00" in text:
+    if "\x00" in text:
         issue = {"location": "file", "reason": "NUL byte detected; binary content is not scanned"}
         record.update(status="unsupported", fields_skipped=[issue], unsupported_fields=[issue])
         return [], record
