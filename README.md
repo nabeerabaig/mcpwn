@@ -22,6 +22,16 @@ claude --plugin-dir /path/to/mcp-injection-scanner
 
 A `SessionStart` hook runs a quiet static repo scan and only speaks up if it finds warning-level or worse issues. The `injection-triage` skill tells Claude how to judge findings and to treat scanned text as untrusted data.
 
+## Scan coverage and boundaries
+
+The MCP tool scan now emits a per-tool coverage record in JSON output. It records discovered and scanned text fields, skipped or unsupported values, scan status, whether Tier 3 produced a semantic finding, and whether dynamic validation actually tested that tool. Text output includes a compact coverage summary.
+
+For tool definitions, the scanner inspects names, descriptions, input schemas, output schemas, annotations, `_meta`, and additional metadata fields preserved from the server response. Schema traversal has depth, node-count, and aggregate text-size limits. Values that are not text are recorded as not applicable rather than being counted as successfully scanned. Unsupported values and exceeded limits are reported.
+
+**Important protocol boundary:** the live collector currently requests `tools/list` only. It does not collect or claim to scan MCP prompts, prompt arguments, resources, or resource templates. JSON coverage output lists these unqueried surfaces explicitly. A successful tool-definition scan is not a complete MCP-server audit.
+
+The optional Tier 3 reviewer receives the preserved tool metadata, but remains advisory. A missing backend, invalid response, timeout, or inconclusive response is not counted as a completed semantic review.
+
 ## Detection tiers
 
 1. **Tier 1, structural:** zero-width / bidi / tag Unicode (tag characters are decoded), base64 payloads (decoded and re-scanned), override and concealment phrases.
