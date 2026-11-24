@@ -404,11 +404,11 @@ def scan_protocol_surfaces(surfaces: list[dict], use_llm: bool = False
                                schema, source, extra={"promptMetadata": item})
             elif surface_name == "resources":
                 label = item.get("name") if isinstance(item.get("name"), str) else f"resource-{index + 1}"
-                tool = ToolDef(server, label, description, {}, source,
+                tool = ToolDef(server, f"resource:{label}", description, {}, source,
                                extra={"resourceMetadata": item})
             else:
                 label = item.get("name") if isinstance(item.get("name"), str) else f"resource-template-{index + 1}"
-                tool = ToolDef(server, label, description, {}, source,
+                tool = ToolDef(server, f"resource-template:{label}", description, {}, source,
                                extra={"resourceTemplateMetadata": item})
             found, record = scan_tool_with_coverage(tool, use_llm=use_llm)
             record.update(source_type=source_type, source_id=f"{server}/{surface_name}/{label}",
