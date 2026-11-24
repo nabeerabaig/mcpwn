@@ -110,6 +110,12 @@ for line in sys.stdin:
                     mcp_client.fetch_tools_http(ServerSpec("remote", "", transport="http",
                                                            url="http://127.0.0.1/mcp"))
 
+    def test_model_factory_rejects_malformed_tool_metadata(self):
+        with self.assertRaisesRegex(ValueError, "description must be a string"):
+            ToolDef.from_mcp("local", {"name": "lookup", "description": 7})
+        with self.assertRaisesRegex(ValueError, "inputSchema must be an object"):
+            ToolDef.from_mcp("local", {"name": "lookup", "inputSchema": None})
+
     def test_tool_metadata_unknown_fields_round_trip_flattened(self):
         raw = {
             "name": "lookup", "description": "Searches records.",
