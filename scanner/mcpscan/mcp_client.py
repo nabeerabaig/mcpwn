@@ -237,15 +237,20 @@ def _parse_http_body(raw: str, content_type: str, rid) -> dict | None:
     return msg if isinstance(msg, dict) and msg.get("id") == rid else None
 
 
-def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0, *, include_surfaces: bool = True) -> tuple[list[ToolDef], list[dict]]:
+def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0, *,
+                         include_surfaces: bool = True) -> tuple[list[ToolDef], list[dict]]:
     import urllib.error
     import urllib.request
     session_id = None
     counter = [0]
 
     def post(payload: dict, expect_response: bool = True) -> dict | None:
-        headers = {"content-type": "application/json", "accept": "application/json, text/event-stream",
-                   "MCP-Protocol-Version": PROTOCOL_VERSION, **{str(k): str(v) for k, v in (spec.headers or {}).items()}}
+        headers = {
+            "content-type": "application/json",
+            "accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
+            **{str(k): str(v) for k, v in (spec.headers or {}).items()},
+        }
         if session_id:
             headers["Mcp-Session-Id"] = session_id
         req = urllib.request.Request(spec.url, data=json.dumps(payload).encode(), headers=headers, method="POST")
@@ -260,8 +265,8 @@ def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0, *, include_sur
                 except UnicodeDecodeError as exc:
                     raise McpError("HTTP response is not valid UTF-8") from exc
                 ctype = resp.headers.get("content-type", "")
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            raise McpError(f"http error: {e}") from e
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise McpError(f"http error: {exc}") from exc
         nonlocal_set(sid)
         if not expect_response:
             return None
@@ -284,25 +289,46 @@ def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0, *, include_sur
         counter[0] += 1
         return post({"jsonrpc": "2.0", "id": counter[0], "method": method, "params": params or {}})
 
-    rpc("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                       "clientInfo": {"name": "mcpscan", "version": __version__}})
+    initialized = rpc("initialize", {
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "mcpscan", "version": __version__},
+    })
     post({"jsonrpc": "2.0", "method": "notifications/initialized"}, expect_response=False)
-    return _list_tools(spec, rpc)
+    tools = _list_tools(spec, rpc)
+    capabilities = initialized.get("capabilities", {}) if isinstance(initialized, dict) else {}
+    surfaces = (_collect_protocol_surfaces(spec.name, spec.source, capabilities, rpc)
+                if include_surfaces else [])
+    return tools, surfaces
+
+
+def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
+    return fetch_inventory_http(spec, timeout, include_surfaces=False)[0]
+
+
+def fetch_inventory(spec: ServerSpec, timeout: float = 15.0, *,
+                    include_surfaces: bool = True) -> tuple[list[ToolDef], list[dict]]:
+    if spec.transport in ("http", "streamable-http", "streamableHttp") and spec.url:
+        return fetch_inventory_http(spec, timeout, include_surfaces=include_surfaces)
+    if spec.transport != "stdio":
+        raise McpError(f"transport '{spec.transport}' not supported (stdio and streamable HTTP only; legacy SSE is not)")
+    session = StdioSession(spec, timeout)
+    try:
+        initialized = session.request("initialize", {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "mcpscan", "version": __version__},
+        })
+        session._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        tools = _list_tools(spec, session.request)
+        capabilities = initialized.get("capabilities", {}) if isinstance(initialized, dict) else {}
+        surfaces = (_collect_protocol_surfaces(spec.name, spec.source, capabilities, session.request)
+                    if include_surfaces else [])
+        return tools, surfaces
+    finally:
+        session.close()
 
 
 def fetch_tools(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
-    if spec.transport in ("http", "streamable-http", "streamableHttp") and spec.url:
-        return fetch_tools_http(spec, timeout)
-    if spec.transport != "stdio":
-        raise McpError(f"transport '{spec.transport}' not supported (stdio and streamable HTTP only; legacy SSE is not)")
-    sess = StdioSession(spec, timeout)
-    try:
-        sess.request("initialize", {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "mcpscan", "version": "0.2.0"},
-        })
-        sess._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        return _list_tools(spec, sess.request)
-    finally:
-        sess.close()
+    # Preserve the historical tools-only behavior for commands that do not request extended inventory.
+    return fetch_inventory(spec, timeout, include_surfaces=False)[0]
