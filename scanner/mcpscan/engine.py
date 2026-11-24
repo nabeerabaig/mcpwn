@@ -40,6 +40,9 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list | None = No
             if not isinstance(key, str):
                 yield (path, None, "non-string object key")
                 continue
+            yield from _walk_text(key, f"{path}.{key}#key", depth=depth + 1, budget=budget)
+            if budget[2] is not None:
+                return
             if key in ("properties", "$defs", "definitions") and isinstance(value, dict):
                 for property_name, property_value in value.items():
                     if budget[2] is not None:
