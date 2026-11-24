@@ -18,7 +18,8 @@ class HoldoutEvaluationTests(unittest.TestCase):
         self.assertEqual(report["summary"]["benign_cases"], 6)
         self.assertEqual(report["summary"]["true_positives"] + report["summary"]["false_negatives"], 6)
         self.assertEqual(report["summary"]["true_negatives"] + report["summary"]["false_positives"], 6)
-        self.assertIn("not used to tune", report["provenance"].lower())\n        self.assertIn("independently sourced", report["provenance"].lower())
+        self.assertIn("not used to tune", report["provenance"].lower())
+        self.assertIn("independently sourced", report["provenance"].lower())
         self.assertIn("by_source_type", report)
         self.assertIn("malicious_layer_hits", report)
 
