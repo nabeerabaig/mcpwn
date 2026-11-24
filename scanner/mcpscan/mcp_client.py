@@ -268,7 +268,10 @@ def fetch_inventory_http(spec: ServerSpec, timeout: float = 15.0) -> tuple[list[
         if msg is None:
             raise McpError(f"no response to {payload.get('method')}")
         if "error" in msg:
-            raise McpError(f"{payload.get('method')} error: {msg['error']}")
+            error = msg["error"]
+            if isinstance(error, dict) and error.get("code") == -32601:
+                raise McpMethodNotFound(f"{payload.get('method')} is not supported by this server")
+            raise McpError(f"{payload.get('method')} error: {error}")
         return msg.get("result") or {}
 
     def nonlocal_set(sid):
