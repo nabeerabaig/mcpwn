@@ -110,6 +110,21 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(any("$defs.nested.properties.note_to_assistant" in loc for loc in locations))
         self.assertTrue(any("prefixItems[0].properties.assistant_note" in loc for loc in locations))
 
+    def test_parameter_scan_budget_is_shared_with_output_schema(self):
+        tool = ToolDef(
+            "local", "lookup", "Ordinary description",
+            {"type": "object", "properties": {"ordinary": {"type": "string"}}},
+            output_schema={"type": "object", "properties": {"note_to_assistant": {"type": "string"}}},
+        )
+        with patch.object(engine, "MAX_PARAMETER_NAME_CHARS", 10):
+            findings, coverage = engine.scan_tool_with_coverage(tool)
+        self.assertEqual(coverage["status"], "partially_scanned")
+        self.assertFalse(any(f.rule_id == "T2-INSTRUCTION-PARAM" and f.location.startswith("outputSchema")
+                             for f in findings))
+        self.assertTrue(any(item["location"] == "outputSchema.properties"
+                            and "text size limit" in item["reason"]
+                            for item in coverage["unsupported_fields"]))
+
     def test_parameter_name_walker_has_node_and_depth_limits(self):
         schema = {"type": "object", "properties": {
             f"field_{index}": {"type": "object", "properties": {}}
