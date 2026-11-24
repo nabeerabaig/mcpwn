@@ -10,6 +10,8 @@ from .normalize import normalize_text
 MAX_CONTENT_DEPTH = 32
 MAX_CONTENT_NODES = 20000
 MAX_TEXT_CHARS = 1_000_000
+MAX_PARAMETER_NODES = 20_000
+MAX_PARAMETER_NAME_CHARS = 1_000_000
 
 
 def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list | None = None):
@@ -141,7 +143,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
                 suspicious_unicode.append({"location": loc, **character})
 
     # Parameter-name checks share one independent budget across input and output schemas.
-    parameter_budget = [20000, 1_000_000]
+    parameter_budget = [MAX_PARAMETER_NODES, MAX_PARAMETER_NAME_CHARS]
     parameter_findings, parameter_limit = tier2.scan_param_names_with_status(
         tool.input_schema, tool=tool.name, server=tool.server, source=tool.source,
         budget=parameter_budget
