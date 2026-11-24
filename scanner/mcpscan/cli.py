@@ -55,9 +55,12 @@ def collect_tools(args, *, captured: set[str] | None = None) -> tuple[list[ToolD
                             raise CaptureError("snapshot contains a missing or duplicate tool name")
                         if not isinstance(raw.get("description", ""), str):
                             raise CaptureError("snapshot tool description must be a string")
-                        for field in ("inputSchema", "input_schema"):
-                            if field in raw and not isinstance(raw[field], dict):
+                        for field in ("inputSchema", "input_schema", "outputSchema", "output_schema"):
+                            if field in raw and raw[field] is not None and not isinstance(raw[field], dict):
                                 raise CaptureError("snapshot tool schema must be an object")
+                        for field in ("annotations", "_meta"):
+                            if field in raw and raw[field] is not None and not isinstance(raw[field], dict):
+                                raise CaptureError("snapshot tool metadata must be an object")
                         names.add(name)
                     captured.add(sname)
                 tools.extend(ToolDef.from_mcp(sname, t, str(path)) for t in lst)
