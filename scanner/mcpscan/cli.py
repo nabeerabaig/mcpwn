@@ -134,8 +134,8 @@ def cmd_scan(args) -> int:
     tools, notes = result
     if args.llm and not tier3.backend_available():
         notes.append("--llm requested but no backend configured (set MCPSCAN_LLM_CMD or ANTHROPIC_API_KEY); Tier 3 skipped")
-    findings = engine.scan_tools(tools, use_llm=args.llm)
-    extra = {"tools_scanned": len(tools)}
+    findings, coverage = engine.scan_tools_with_coverage(tools, use_llm=args.llm)
+    extra = {"tools_scanned": len(tools), "coverage": coverage}
     if notes and args.format != "text" and not args.redact_evidence:
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
@@ -144,7 +144,17 @@ def cmd_scan(args) -> int:
         notes.extend(dnotes)
         if not args.redact_evidence:
             extra["dynamic"] = stats
+        tested = set(stats.get("tested_tools", []))
+        for record in coverage:
+            record["dynamic_validation_performed"] = record["source_id"] in tested
         findings.sort(key=lambda f: -f.confidence)
+    if args.format == "text":
+        counts = {}
+        for record in coverage:
+            counts[record["status"]] = counts.get(record["status"], 0) + 1
+        notes.append("coverage: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
+        notes.append(f"coverage fields: {sum(r['fields_scanned'] for r in coverage)} scanned / "
+                     f"{sum(r['fields_discovered'] for r in coverage)} discovered")
     findings = report.filter_min(findings, args.min_confidence)
     emit(findings, args.format, notes, args.output, extra, redact_evidence=args.redact_evidence)
     return 1 if report.exceeds(findings, args.fail_on) else 0
