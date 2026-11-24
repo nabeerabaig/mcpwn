@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
+from hashlib import sha256
 from typing import Any, Optional
+
+DETECTOR_VERSION = "0.3.0.dev0"
 
 SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
 
@@ -27,11 +30,19 @@ class Finding:
     source: str = ""  # config file or scanned file path
     evidence: str = ""
     severity: str = ""
+    finding_id: str = ""
+    detector_version: str = DETECTOR_VERSION
 
     def __post_init__(self) -> None:
-        self.confidence = round(max(0.0, min(1.0, self.confidence)), 2)
+        self.confidence = round(max(0.0, min(1.0, float(self.confidence))), 2)
         if not self.severity:
             self.severity = severity_for(self.confidence)
+        if not self.finding_id:
+            identity = "\\x1f".join((
+                self.detector_version, self.rule_id, self.server, self.tool,
+                self.source, self.location,
+            ))
+            self.finding_id = sha256(identity.encode("utf-8", "replace")).hexdigest()[:24]
 
     def rescore(self, confidence: float) -> None:
         self.confidence = round(max(0.0, min(1.0, confidence)), 2)
