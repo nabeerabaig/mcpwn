@@ -44,6 +44,7 @@ def decode_tag_chars(text: str) -> str:
     return "".join(out)
 
 
+# Bounded spans allow line-wrapped phrases without crossing sentence boundaries.
 _GAP = r"[^.]{0,40}"
 OVERRIDE_PATTERNS = [
     (rf"\b(ignore|disregard|forget|override)\b{_GAP}\b(previous|prior|above|earlier|all|any)\b{_GAP}\b(instructions?|prompts?|rules|directions?|context)\b", "instruction-override", 0.9),
@@ -76,28 +77,7 @@ def _printable_text(decoded: str) -> bool:
 def scan_text(text: str, *, tool: str = "", server: str = "", location: str = "", source: str = "") -> list[Finding]:
     findings: list[Finding] = []
     if not text:
-    
-    # Hex payloads: decode only bounded, even-length, printable UTF-8 candidates.
-    for m in _HEX_RE.finditer(text):
-        blob = m.group(1)
-        if len(blob) % 2:
-            continue
-        try:
-            decoded = bytes.fromhex(blob).decode("utf-8")
-        except (ValueError, UnicodeDecodeError):
-            continue
-        if not _printable_text(decoded) or not _SUSPICIOUS_DECODED.search(decoded):
-            continue
-        findings.append(mk("T1-HEX-PAYLOAD", "Hex-encoded instruction payload",
-                           "Hexadecimal content decodes to text containing instruction/security keywords.",
-                           0.9, blob))
-        decoded_findings = scan_text(decoded, tool=tool, server=server,
-                                      location=location + "#hex", source=source)[:3]
-        for finding in decoded_findings:
-            finding.evidence = blob
-            finding.message += " Detected in decoded hexadecimal content; original encoded evidence is preserved."
-        findings.extend(decoded_findings)
-    return findings
+        return findings
 
     def mk(rule, title, msg, conf, evidence=""):
         return Finding(
@@ -106,7 +86,7 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
             evidence=evidence[:200],
         )
 
-    # hidden unicode
+    # Hidden Unicode controls and Unicode tag payloads.
     hidden: dict[str, int] = {}
     for ch in text:
         name = _is_hidden(ch)
@@ -129,7 +109,8 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
                 finding.message += " Detected in hidden Unicode-decoded text; original source evidence is preserved."
             findings.extend(decoded_findings)
 
-    # override phrases
+    # NFKC, strip invisible format controls in the analysis copy, and collapse
+    # whitespace. Original text remains untouched for evidence and reporting.
     lowered = unicodedata.normalize("NFKC", text)
     analysis = "".join(ch for ch in lowered if unicodedata.category(ch) != "Cf")
     analysis = re.sub(r"\s+", " ", analysis)
@@ -138,11 +119,11 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
         if m:
             matched = m.group(0)
             original_evidence = matched if matched in text else text[:200]
-            note = " Text was matched after NFKC normalization." if matched not in text else ""
+            note = " Text was matched after Unicode/whitespace normalization." if matched not in text else ""
             findings.append(mk(f"T1-{name.upper()}", f"Injection phrase: {name}",
                                f"Text matches '{name}' pattern.{note}", conf, original_evidence))
 
-    # Base64 payloads
+    # Base64 payloads.
     for m in _B64_RE.finditer(text):
         blob = m.group(1)
         try:
@@ -164,4 +145,26 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
         elif len(decoded) >= 24 and " " in decoded:
             findings.append(mk("T1-BASE64-TEXT", "Base64-encoded readable text",
                                "Opaque base64 blob that decodes to prose; unusual in a tool definition.", 0.55, blob))
+
+    # Hex payloads: only even-length, valid UTF-8, mostly printable candidates.
+    for m in _HEX_RE.finditer(text):
+        blob = m.group(1)
+        if len(blob) % 2:
+            continue
+        try:
+            decoded = bytes.fromhex(blob).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not _printable_text(decoded) or not _SUSPICIOUS_DECODED.search(decoded):
+            continue
+        findings.append(mk("T1-HEX-PAYLOAD", "Hex-encoded instruction payload",
+                           "Hexadecimal content decodes to text containing instruction/security keywords.",
+                           0.9, blob))
+        decoded_findings = scan_text(decoded, tool=tool, server=server,
+                                      location=location + "#hex", source=source)[:3]
+        for finding in decoded_findings:
+            finding.evidence = blob
+            finding.message += " Detected in decoded hexadecimal content; original encoded evidence is preserved."
+        findings.extend(decoded_findings)
+
     return findings
