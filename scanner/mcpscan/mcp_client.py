@@ -12,6 +12,9 @@ from .models import ServerSpec, ToolDef
 
 PROTOCOL_VERSION = "2025-06-18"
 MAX_TOOL_PAGES = 50
+MAX_TOOL_COUNT = 10_000
+MAX_RPC_LINE_CHARS = 2_000_000
+MAX_HTTP_BODY_BYTES = 2_000_000
 
 
 class McpError(Exception):
@@ -39,7 +42,13 @@ class StdioSession:
     def _reader(self) -> None:
         assert self.proc.stdout
         try:
-            for line in self.proc.stdout:
+            while True:
+                line = self.proc.stdout.readline(MAX_RPC_LINE_CHARS + 1)
+                if not line:
+                    break
+                if len(line) > MAX_RPC_LINE_CHARS:
+                    self._q.put(McpError(f"server stdout line exceeds {MAX_RPC_LINE_CHARS} characters"))
+                    break
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError:
@@ -114,6 +123,8 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
         for raw in result["tools"]:
             if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"].strip():
                 raise McpError("tools/list contains a tool without a valid name")
+            if "description" in raw and not isinstance(raw["description"], str):
+                raise McpError("tools/list tool description must be a string")
             if raw["name"] in names:
                 raise McpError("tools/list contains duplicate tool names")
             for schema_key in ("inputSchema", "outputSchema"):
@@ -124,6 +135,8 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
                     raise McpError(f"tools/list tool {metadata_key} must be an object")
             names.add(raw["name"])
             tools.append(ToolDef.from_mcp(spec.name, raw, spec.source))
+            if len(tools) > MAX_TOOL_COUNT:
+                raise McpError(f"tools/list exceeded the {MAX_TOOL_COUNT}-tool inventory limit")
         cursor = result.get("nextCursor")
         if cursor is None:
             return tools
@@ -173,7 +186,13 @@ def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 sid = resp.headers.get("Mcp-Session-Id")
-                body = resp.read().decode("utf-8", "replace")
+                body_bytes = resp.read(MAX_HTTP_BODY_BYTES + 1)
+                if len(body_bytes) > MAX_HTTP_BODY_BYTES:
+                    raise McpError(f"HTTP response exceeds {MAX_HTTP_BODY_BYTES} bytes")
+                try:
+                    body = body_bytes.decode("utf-8", "strict")
+                except UnicodeDecodeError as exc:
+                    raise McpError("HTTP response is not valid UTF-8") from exc
                 ctype = resp.headers.get("content-type", "")
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise McpError(f"http error: {e}") from e
