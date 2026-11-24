@@ -76,7 +76,7 @@ for line in sys.stdin:
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "oversized.py"
             script.write_text(
-                "import sys\\nsys.stdout.write('x' * 101 + '\\\\n')\\nsys.stdout.flush()\\n",
+                "import sys\nsys.stdout.write('x' * 101 + '\\n')\nsys.stdout.flush()\n",
                 encoding="utf-8"
             )
             session = None
