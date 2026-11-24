@@ -8,7 +8,8 @@ import subprocess
 import threading
 import time
 
-from .models import ServerSpec, ToolDef
+from . import __version__
+from .models import ServerSpec, ToolDef, validate_tool_raw
 
 PROTOCOL_VERSION = "2025-06-18"
 MAX_TOOL_PAGES = 50
@@ -121,18 +122,11 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
             raise McpError("tools/list result must contain a tools array")
         for raw in result["tools"]:
-            if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"].strip():
-                raise McpError("tools/list contains a tool without a valid name")
-            if "description" in raw and not isinstance(raw["description"], str):
-                raise McpError("tools/list tool description must be a string")
+            validation_error = validate_tool_raw(raw)
+            if validation_error:
+                raise McpError(f"tools/list {validation_error}")
             if raw["name"] in names:
                 raise McpError("tools/list contains duplicate tool names")
-            for schema_key in ("inputSchema", "outputSchema"):
-                if schema_key in raw and raw[schema_key] is not None and not isinstance(raw[schema_key], dict):
-                    raise McpError(f"tools/list tool {schema_key} must be an object")
-            for metadata_key in ("annotations", "_meta"):
-                if metadata_key in raw and raw[metadata_key] is not None and not isinstance(raw[metadata_key], dict):
-                    raise McpError(f"tools/list tool {metadata_key} must be an object")
             names.add(raw["name"])
             tools.append(ToolDef.from_mcp(spec.name, raw, spec.source))
             if len(tools) > MAX_TOOL_COUNT:
@@ -216,7 +210,7 @@ def fetch_tools_http(spec: ServerSpec, timeout: float = 15.0) -> list[ToolDef]:
         return post({"jsonrpc": "2.0", "id": counter[0], "method": method, "params": params or {}})
 
     rpc("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                       "clientInfo": {"name": "mcpscan", "version": "0.2.0"}})
+                       "clientInfo": {"name": "mcpscan", "version": __version__}})
     post({"jsonrpc": "2.0", "method": "notifications/initialized"}, expect_response=False)
     return _list_tools(spec, rpc)
 
