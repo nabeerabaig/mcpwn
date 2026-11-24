@@ -116,8 +116,12 @@ def _list_tools(spec: ServerSpec, request) -> list[ToolDef]:
                 raise McpError("tools/list contains a tool without a valid name")
             if raw["name"] in names:
                 raise McpError("tools/list contains duplicate tool names")
-            if "inputSchema" in raw and not isinstance(raw["inputSchema"], dict):
-                raise McpError("tools/list tool inputSchema must be an object")
+            for schema_key in ("inputSchema", "outputSchema"):
+                if schema_key in raw and raw[schema_key] is not None and not isinstance(raw[schema_key], dict):
+                    raise McpError(f"tools/list tool {schema_key} must be an object")
+            for metadata_key in ("annotations", "_meta"):
+                if metadata_key in raw and raw[metadata_key] is not None and not isinstance(raw[metadata_key], dict):
+                    raise McpError(f"tools/list tool {metadata_key} must be an object")
             names.add(raw["name"])
             tools.append(ToolDef.from_mcp(spec.name, raw, spec.source))
         cursor = result.get("nextCursor")
