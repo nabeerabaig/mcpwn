@@ -44,15 +44,8 @@ def _walk_text(node: Any, path: str, *, depth: int = 0, budget: list | None = No
                 for property_name, property_value in value.items():
                     if budget[2] is not None:
                         return
-                    if budget[0] <= 0:
-                        budget[2] = "node count limit exceeded"
-                        yield (path, None, budget[2])
-                        return
-                    budget[0] -= 1
-                    if isinstance(property_name, str):
-                        yield (f"{path}.{key}.{property_name}#name", property_name, None)
-                    else:
-                        yield (f"{path}.{key}", None, "non-string schema property name")
+                    yield from _walk_text(property_name, f"{path}.{key}.{property_name}#name",
+                                           depth=depth + 2, budget=budget)
                     yield from _walk_text(property_value, f"{path}.{key}.{property_name}",
                                            depth=depth + 2, budget=budget)
             else:
