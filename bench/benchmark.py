@@ -9,6 +9,7 @@ A sample counts as 'flagged' when its highest-confidence finding reaches --thres
 """
 import argparse
 import json
+import math
 import os
 import sys
 from collections import defaultdict
@@ -41,6 +42,11 @@ def run(samples, use_dynamic, threshold):
             print("note:", n, file=sys.stderr)
         print("dynamic stats:", stats, file=sys.stderr)
         findings_by = {t.name: [f for f in allf if f.tool == t.name] for t in tools}
+        for source_id, verdict in stats.get("tool_verdicts", {}).items():
+            record = coverage_by.get(source_id.split("/", 1)[-1])
+            if record is not None:
+                record["dynamic_validation_performed"] = True
+                record["dynamic_validation_status"] = verdict
     for (cat, name, *_), t in zip(samples, tools):
         fs = findings_by[t.name]
         top = max((f.confidence for f in fs), default=0.0)
@@ -52,6 +58,8 @@ def run(samples, use_dynamic, threshold):
                         "fields_discovered": coverage["fields_discovered"],
                         "fields_scanned": coverage["fields_scanned"],
                         "unsupported_fields": len(coverage["unsupported_fields"]),
+                        "dynamic_validation_performed": coverage["dynamic_validation_performed"],
+                        "dynamic_validation_status": coverage["dynamic_validation_status"],
                         "rules": sorted({f.rule_id for f in fs if f.confidence >= threshold})})
     return results
 
@@ -62,6 +70,8 @@ def main():
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--json")
     a = ap.parse_args()
+    if not math.isfinite(a.threshold) or not 0.0 <= a.threshold <= 1.0:
+        ap.error("--threshold must be finite and between 0 and 1")
 
     mal = run(MALICIOUS, a.dynamic, a.threshold)
     ben = run(BENIGN, a.dynamic, a.threshold)
@@ -114,6 +124,10 @@ def main():
                                               for row in mal + ben),
                     "fields_discovered": sum(row["fields_discovered"] for row in mal + ben),
                     "fields_scanned": sum(row["fields_scanned"] for row in mal + ben),
+                    "dynamic_validation_performed": sum(row["dynamic_validation_performed"] for row in mal + ben),
+                    "dynamic_inconclusive": sum(row["dynamic_validation_status"] == "inconclusive" for row in mal + ben),
+                    "dynamic_confirmed": sum(row["dynamic_validation_status"] == "confirmed" for row in mal + ben),
+                    "dynamic_cleared": sum(row["dynamic_validation_status"] == "cleared" for row in mal + ben),
                 },
                 "malicious": mal, "benign": ben,
             }, f, indent=2)
