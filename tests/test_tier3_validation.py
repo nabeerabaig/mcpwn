@@ -35,6 +35,14 @@ class Tier3ValidationTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertIsNone(tier3._parse(raw))
 
+    def test_semantic_prompt_requires_context_and_false_positive_checks(self):
+        prompt = tier3.QUESTION.lower()
+        self.assertIn("outside the tool's legitimate purpose", prompt)
+        self.assertIn("quoted, hypothetical", prompt)
+        self.assertIn("combinations", prompt)
+        self.assertIn("untrusted data", prompt)
+        self.assertIn("contextual mismatch", prompt)
+
     def test_parse_bounds_reason_length(self):
         parsed = tier3._parse('{"injection": false, "confidence": 0.7, "reason": "' + ("x" * 500) + '"}')
         self.assertIsNotNone(parsed)
