@@ -15,4 +15,4 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Run isolated prompt-injection benchmark
-        run: python -m unittest tests.test_prompt_injection_benchmark -v
+        run: python -m unittest discover -s tests -p "test_prompt_injection_benchmark.py" -v
