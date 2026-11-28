@@ -184,14 +184,16 @@ def scan_file_with_coverage(path: Path, root: Path | None = None) -> tuple[list[
                     if key not in raw_locations or (finding.evidence and (*key, finding.evidence) not in raw_signals):
                         new_signals.append(finding)
                 findings.extend(normalized_findings)
-                if normalized.obfuscation_transformed and new_signals:
+                intrinsic_matches = [f for f in findings if f.tier == 1
+                                     and "Text was matched after" in f.message]
+                if normalized.obfuscation_transformed and (new_signals or intrinsic_matches):
                     findings.append(Finding(
                         "T1-UNICODE-OBFUSCATION", 1,
                         "Unicode obfuscation in suspicious instruction",
                         "A suspicious instruction was detectable only after Unicode obfuscation normalization.",
                         0.9, server="repo", tool=path.name, source=relative,
                         location="file",
-                        evidence=next((item.evidence for item in new_signals if item.evidence), ""),
+                        evidence=next((item.evidence for item in (new_signals or intrinsic_matches) if item.evidence), ""),
                     ))
                 record["detectors_applied"].append("unicode-normalized-review")
         else:
