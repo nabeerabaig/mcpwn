@@ -160,14 +160,26 @@ def scan_file_with_coverage(path: Path, root: Path | None = None) -> tuple[list[
             record["suspicious_unicode"] = [
                 {"location": "file", **character} for character in normalized.suspicious_characters
             ]
-            if normalized.transformed and normalized.normalized is not None:
+            if normalized.analysis_text is not None and normalized.analysis_text != text:
                 record["normalization_applied"] = True
-                normalized_findings = _scan_decoded_text(normalized.normalized, path, relative + "#nfkc")
+                normalized_findings = _scan_decoded_text(
+                    normalized.analysis_text, path, relative + "#nfkc-unicode-normalized"
+                )
                 for finding in normalized_findings:
                     finding.evidence = text[:200]
-                    finding.message += " Detected in an NFKC-normalized representation; original file evidence is retained."
+                    finding.message += (
+                        " Detected in a Unicode-normalized analysis view; original file evidence is retained."
+                    )
                 findings.extend(normalized_findings)
-                record["detectors_applied"].append("nfkc-normalized-review")
+                if normalized.obfuscation_transformed and normalized_findings:
+                    findings.append(Finding(
+                        "T1-UNICODE-OBFUSCATION", 1,
+                        "Unicode obfuscation in suspicious instruction",
+                        "A suspicious instruction was detectable only after Unicode obfuscation normalization.",
+                        0.9, server="repo", tool=path.name, source=relative,
+                        location="file", evidence=text[:200],
+                    ))
+                record["detectors_applied"].append("unicode-normalized-review")
         else:
             issue = {"location": "file", "reason": normalized.reason or "normalization unsupported"}
             record["fields_skipped"].append(issue)

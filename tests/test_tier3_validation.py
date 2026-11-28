@@ -42,6 +42,8 @@ class Tier3ValidationTests(unittest.TestCase):
         self.assertIn("combinations", prompt)
         self.assertIn("untrusted data", prompt)
         self.assertIn("contextual mismatch", prompt)
+        self.assertIn("who is being directed", prompt)
+        self.assertIn("paraphrases and indirect wording", prompt)
 
     def test_parse_bounds_reason_length(self):
         parsed = tier3._parse('{"injection": false, "confidence": 0.7, "reason": "' + ("x" * 500) + '"}')

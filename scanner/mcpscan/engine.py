@@ -126,16 +126,29 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
         findings.extend(tier1.scan_text(text, location=loc, **ctx))
         findings.extend(tier2.scan_text(text, location=loc, sibling_tools=sibling_names, **ctx))
         normalized = normalize_text(text)
-        if normalized.transformed and normalized.normalized is not None:
+        analysis_text = normalized.analysis_text
+        if analysis_text is not None and analysis_text != text:
             normalized_fields.append(loc)
-            normalized_findings = tier2.scan_text(
-                normalized.normalized, location=loc + "#nfkc",
-                sibling_tools=sibling_names, **ctx
+            normalized_findings = (
+                tier1.scan_text(analysis_text, location=loc + "#nfkc-unicode-normalized", **ctx)
+                + tier2.scan_text(analysis_text, location=loc + "#nfkc-unicode-normalized",
+                                  sibling_tools=sibling_names, **ctx)
             )
             for finding in normalized_findings:
                 finding.evidence = text[:200]
-                finding.message += " Detected in an NFKC-normalized representation; evidence is preserved from the original source."
+                finding.message += (
+                    " Detected in a Unicode-normalized analysis view; evidence is preserved from the original source."
+                )
             findings.extend(normalized_findings)
+            if normalized.obfuscation_transformed and normalized_findings:
+                findings.append(Finding(
+                    rule_id="T1-UNICODE-OBFUSCATION", tier=1,
+                    title="Unicode obfuscation in suspicious instruction",
+                    message=("A suspicious instruction was detectable only after removing invisible formatting "
+                             "characters or normalizing lookalike Unicode characters."),
+                    confidence=0.9, server=tool.server, tool=tool.name,
+                    location=loc, source=tool.source, evidence=text[:200],
+                ))
         if len(suspicious_unicode) < 200:
             for character in normalized.suspicious_characters:
                 if len(suspicious_unicode) >= 200:
