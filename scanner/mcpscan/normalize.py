@@ -90,3 +90,51 @@ def normalize_text(value: object) -> NormalizedText:
         analysis_text=confusable_view,
         obfuscation_transformed=obfuscation_transformed,
     )
+
+
+NORMALIZED_SUFFIX = "#nfkc-unicode-normalized"
+
+
+class OriginalEvidence:
+    """Locate normalized evidence in the original source, without guessing spans."""
+
+    def __init__(self, normalized: NormalizedText):
+        self.original = normalized.original
+        self.analysis = normalized.analysis_text or ""
+        self._lines: list[tuple[str, str]] | None = None
+
+    def restore(self, snippet: str) -> str:
+        """Return an exact source excerpt, or empty if it cannot be located uniquely."""
+        if not snippet or self.analysis.count(snippet) != 1:
+            return ""
+        if self._lines is None:
+            original_lines = self.original.splitlines(keepends=True)
+            self._lines = [(line, normalize_text(line).analysis_text or "") for line in original_lines]
+            if "".join(view for _, view in self._lines) != self.analysis:
+                self._lines = []
+        offset = self.analysis.index(snippet)
+        end = offset + len(snippet)
+        place = 0
+        for original_line, view in self._lines:
+            if place <= offset < place + len(view) and end <= place + len(view):
+                if len(original_line) > 32_768:
+                    return snippet[:200] if self.original.count(snippet) == 1 else ""
+                start = offset - place
+                # Map only the matching line, and verify characterwise normalization
+                # matches whole-line normalization before trusting the offsets.
+                pieces = []
+                positions = []
+                for i, char in enumerate(original_line):
+                    normalized = unicodedata.normalize("NFKC", char)
+                    part = "".join(c for c in normalized if not _is_invisible_format(c)).translate(_CONFUSABLES)
+                    pieces.append(part)
+                    positions.extend([i] * len(part))
+                if "".join(pieces) == view:
+                    return original_line[positions[start]:positions[end - place - 1] + 1][:200]
+                # Combining characters can prevent a characterwise map; retain the
+                # exact matched line only when it can fit without truncation.
+                line = original_line.rstrip("\r\n")
+                return line if len(line) <= 200 else ""
+            place += len(view)
+        # For unchanged multi-line snippets, the original occurrence is exact.
+        return snippet[:200] if self.original.count(snippet) == 1 else ""

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+from . import intent
 from .models import Finding
 
 DIRECTIVE = re.compile(
@@ -141,6 +142,8 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
         out.append(mk("T2-UNKNOWN-TOOL-REF", "References a tool not in this server",
                       f"Description tells the agent to call '{target}', which this server does not define.", 0.4, cm.group(0)))
         break
+    for rule, title, message, confidence, evidence in intent.signals(text):
+        out.append(mk(f"T2-{rule}", title, message, confidence, evidence))
     return out
 
 
