@@ -8,6 +8,9 @@ import re
 import json
 from pathlib import Path
 import sys
+import subprocess
+import platform
+from datetime import datetime, timezone
 from collections import Counter, defaultdict
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,9 +65,18 @@ def evaluate(path: Path = DEFAULT, *, expected_digest: str | None = None) -> dic
         findings, coverage = engine.scan_tool_with_coverage(tool)
         top = max((finding.confidence for finding in findings), default=0.0)
         tiers = sorted({finding.tier for finding in findings if finding.confidence >= threshold})
+        flagged = top >= threshold
+        outcome = (
+            "TP" if case["label"] == "malicious" and flagged else
+            "FN" if case["label"] == "malicious" else
+            "FP" if flagged else "TN"
+        )
         rows.append({
-            "id": case["id"], "label": case["label"], "category": case["category"],
-            "source_type": case["source_type"], "flagged": top >= threshold,
+            "id": case["id"], "label": case["label"],
+            "predicted_label": "malicious" if flagged else "benign",
+            "outcome": outcome,
+            "category": case["category"],
+            "source_type": case["source_type"], "flagged": flagged,
             "top_confidence": top, "tiers": tiers,
             "rules": sorted({finding.rule_id for finding in findings if finding.confidence >= threshold}),
             "coverage_status": coverage["status"],
@@ -91,8 +103,39 @@ def evaluate(path: Path = DEFAULT, *, expected_digest: str | None = None) -> dic
             bucket[key]["flagged"] += int(row["flagged"])
         if row["label"] == "malicious":
             layer_hits.update(row["tiers"])
+
+    try:
+        scanner_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        scanner_commit = None
+
+    evaluated_at = datetime.now(timezone.utc).isoformat()
+    false_positives = [row["id"] for row in rows if row["outcome"] == "FP"]
+    false_negatives = [row["id"] for row in rows if row["outcome"] == "FN"]
+    incomplete_coverage_cases = [
+        row["id"] for row in rows if row["coverage_status"] != "fully_scanned"
+    ]
+
     return {
         "dataset": data.get("name", path.name),
+        "scanner_commit": scanner_commit,
+        "python_version": platform.python_version(),
+        "evaluated_at_utc": evaluated_at,
+        "evaluation_scope": {
+            "includes": "MCP tool metadata scanning (tool names, descriptions, and input schemas)",
+            "excludes": [
+                "agent instruction-file scanning",
+                "runtime model behaviour",
+                "end-to-end agent execution",
+            ],
+        },
         "provenance": data.get("provenance", ""),
         "threshold": threshold,
         "sha256": digest,
@@ -105,6 +148,9 @@ def evaluate(path: Path = DEFAULT, *, expected_digest: str | None = None) -> dic
             "scan_failures": sum(row["coverage_status"] == "failed" for row in rows),
             "unsupported_cases": sum(row["coverage_status"] in ("unsupported", "partially_scanned") for row in rows),
         },
+        "false_positive_cases": false_positives,
+        "false_negative_cases": false_negatives,
+        "incomplete_coverage_cases": incomplete_coverage_cases,
         "by_category": dict(categories),
         "by_source_type": dict(source_types),
         "malicious_layer_hits": {f"tier_{tier}": layer_hits[tier] for tier in range(1, 7)},
