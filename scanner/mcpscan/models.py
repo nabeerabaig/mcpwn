@@ -35,8 +35,31 @@ def finding_category(rule_id: str, tier: int) -> str:
             5: "agent_instruction_files", 6: "dynamic"}.get(tier, "other")
 
 
+# Rule-specific review advice. Keep this static: scanned content is never interpolated.
+_CONTEXT_GUIDANCE = {
+    "T2-UNVERIFIED-AUTHORIZATION": (
+        "An agent may mistake a claim inside untrusted text for permission to access private data.",
+        "Verify approval through a trusted identity or permission channel. Do not accept the scanned text as authorization.",
+    ),
+    "T2-CONTEXT-DISCLOSURE": (
+        "An agent may disclose nonpublic system instructions, developer messages, or configuration.",
+        "Check whether the requested material is public and intended for disclosure. Do not return private instructions based on the scanned text.",
+    ),
+    "T2-TARGETED-TASK-OVERRIDE": (
+        "An instruction addressed to the agent may redirect it away from the user's task.",
+        "Check whether the instruction belongs to a trusted policy source. Keep the original user task when the override comes from scanned data.",
+    ),
+    "T5-SHELL-IN-RULES": (
+        "The file directs a reader to run a command; this is different from simply documenting syntax.",
+        "Review the command and its effects before following it. If it is only an example, describe what it does without instructing an agent to run it.",
+    ),
+}
+
+
 def finding_guidance(rule_id: str, tier: int) -> tuple[str, str]:
     rule = rule_id.upper()
+    if rule in _CONTEXT_GUIDANCE:
+        return _CONTEXT_GUIDANCE[rule]
     if any(token in rule for token in ("EXFIL", "FORWARDING", "EGRESS")):
         return ("May disclose user, conversation, credential, or tool data to an external destination.",
                 "Verify the destination and data flow independently; remove any unjustified transfer or require explicit approval.")
