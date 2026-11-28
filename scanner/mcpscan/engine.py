@@ -148,7 +148,9 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
             raw_rules = {f.rule_id for f in raw_findings}
             new_signals = [f for f in normalized_findings if f.rule_id not in raw_rules
                            or (f.evidence and (f.rule_id, f.evidence) not in raw_signals)]
-            if normalized.obfuscation_transformed and new_signals:
+            intrinsic_matches = [f for f in raw_findings if f.tier == 1
+                                 and "Text was matched after" in f.message]
+            if normalized.obfuscation_transformed and (new_signals or intrinsic_matches):
                 findings.append(Finding(
                     rule_id="T1-UNICODE-OBFUSCATION", tier=1,
                     title="Unicode obfuscation in suspicious instruction",
@@ -156,7 +158,7 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
                              "characters or normalizing lookalike Unicode characters."),
                     confidence=0.9, server=tool.server, tool=tool.name,
                     location=loc, source=tool.source,
-                    evidence=next((item.evidence for item in new_signals if item.evidence), ""),
+                    evidence=next((item.evidence for item in (new_signals or intrinsic_matches) if item.evidence), ""),
                 ))
         if len(suspicious_unicode) < 200:
             for character in normalized.suspicious_characters:

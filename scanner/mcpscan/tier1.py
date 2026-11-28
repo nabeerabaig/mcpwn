@@ -119,7 +119,10 @@ def scan_text(text: str, *, tool: str = "", server: str = "", location: str = ""
         if m:
             matched = m.group(0)
             original_evidence = matched if matched in text else text[:200]
-            note = " Text was matched after Unicode/whitespace normalization." if matched not in text else ""
+            note = ""
+            if matched not in text:
+                note = (" Text was matched after NFKC compatibility normalization." if lowered != text
+                        else " Text was matched after Unicode/whitespace normalization.")
             findings.append(mk(f"T1-{name.upper()}", f"Injection phrase: {name}",
                                f"Text matches '{name}' pattern.{note}", conf, original_evidence))
 

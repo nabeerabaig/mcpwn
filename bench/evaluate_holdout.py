@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import json
 from pathlib import Path
 import sys
@@ -17,8 +19,24 @@ from mcpscan.models import ToolDef
 DEFAULT = Path(__file__).with_name("holdout-v1.json")
 
 
-def evaluate(path: Path = DEFAULT) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8"))
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key in dataset")
+        result[key] = value
+    return result
+
+
+def evaluate(path: Path = DEFAULT, *, expected_digest: str | None = None) -> dict:
+    raw_dataset = path.read_bytes()
+    digest = hashlib.sha256(raw_dataset).hexdigest()
+    if expected_digest is not None:
+        if not re.fullmatch(r"[a-fA-F0-9]{64}", expected_digest):
+            raise ValueError("expected SHA-256 must be 64 hexadecimal digits")
+        if digest != expected_digest.lower():
+            raise ValueError("dataset SHA-256 does not match the reviewed copy")
+    data = json.loads(raw_dataset, object_pairs_hook=unique_object)
     if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
             or not isinstance(data.get("cases"), list) or not data["cases"]):
         raise ValueError("expected a nonempty version 1 holdout dataset")
@@ -55,6 +73,8 @@ def evaluate(path: Path = DEFAULT) -> dict:
         })
     malicious = [row for row in rows if row["label"] == "malicious"]
     benign = [row for row in rows if row["label"] == "benign"]
+    if not malicious or not benign:
+        raise ValueError("holdout requires both benign and malicious labels")
     tp = sum(row["flagged"] for row in malicious)
     fn = len(malicious) - tp
     fp = sum(row["flagged"] for row in benign)
@@ -75,6 +95,8 @@ def evaluate(path: Path = DEFAULT) -> dict:
         "dataset": data.get("name", path.name),
         "provenance": data.get("provenance", ""),
         "threshold": threshold,
+        "sha256": digest,
+        "complete_coverage": all(row["coverage_status"] == "fully_scanned" for row in rows),
         "summary": {
             "true_positives": tp, "false_positives": fp,
             "true_negatives": tn, "false_negatives": fn,
@@ -94,9 +116,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--expected-sha256", help="verify exact dataset bytes before evaluation")
+    parser.add_argument("--require-complete", action="store_true",
+                        help="emit report but exit 2 if any case was not fully scanned")
     args = parser.parse_args()
     try:
-        result = evaluate(args.dataset)
+        result = evaluate(args.dataset, expected_digest=args.expected_sha256)
     except (OSError, ValueError, TypeError, RecursionError, KeyError) as exc:
         parser.exit(2, f"holdout evaluation failed: {exc}\n")
     if args.json:
@@ -104,7 +129,11 @@ def main() -> int:
     else:
         print(f"{result['dataset']} at threshold {result['threshold']}")
         print(json.dumps(result["summary"], indent=2))
-        print("This is a frozen author-curated set, not independent validation.")
+        print(f"Dataset SHA-256: {result['sha256']}")
+        print(f"Provenance: {result['provenance'] or 'not supplied'}")
+    if args.require_complete and not result["complete_coverage"]:
+        print("holdout evaluation incomplete: metrics should not be used for comparison", file=sys.stderr)
+        return 2
     return 0
 
 
