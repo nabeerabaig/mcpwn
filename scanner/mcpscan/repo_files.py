@@ -7,7 +7,7 @@ from pathlib import Path
 from . import tier1, tier2
 from .engine import dedupe
 from .models import Finding
-from .normalize import normalize_text
+from .normalize import NORMALIZED_SUFFIX, OriginalEvidence, normalize_text
 
 MAX_REPO_FILE_BYTES = 1_000_000
 TEXT_EXTENSIONS = {
@@ -33,9 +33,11 @@ PATTERNS = [
 ]
 
 SHELL_DIRECTIVE = re.compile(
-    r"(?:\b(always|must|should|first|before|automatically|silently)\b[^.\n]{0,80})?"
+    r"^[ \t]*(?:[-*+]\s+)?(?:before [^,\n]{1,80},[ \t]*)?"
+    r"(?:(?:you|(?:the )?(?:assistant|agent))\s+(?:must|should)\s+)?"
+    r"(?:(?:always|first|automatically|silently)\s+)?(?:run|execute|invoke)\s+"
     r"(`[^`\n]*\b(curl|wget|nc|ncat|bash|sh|powershell|python -c|node -e|eval|base64 -d)\b[^`\n]*`|"
-    r"\b(curl|wget)\b[^\n]*\|\s*(ba)?sh\b)", re.I)
+    r"(?:curl|wget)\b[^\n]*\|\s*(?:ba)?sh\b)", re.I | re.M)
 HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.S)
 MD_LINK_REF = re.compile(r"^\s*\[[^\]]+\]:\s*#\s*\((.*?)\)", re.M)
 AUTO_APPROVE = re.compile(r"\b(auto[- ]?approve|without (asking|confirmation|approval)|never ask (for )?(confirmation|permission)|"
@@ -75,7 +77,7 @@ def _scan_decoded_text(text: str, path: Path, relative: str) -> list[Finding]:
         piped = bool(re.search(r"\|\s*(ba)?sh\b", match.group(0)))
         out.append(make(
             "T5-SHELL-IN-RULES", "Shell command embedded in agent rules",
-            "Agent instruction file embeds a shell command the agent may be induced to run (AIShellJack pattern).",
+            "An imperative directs the reader to execute the shell command.",
             0.85 if piped else 0.6, match.group(0)
         ))
     for comment in list(HTML_COMMENT.finditer(text)) + list(MD_LINK_REF.finditer(text)):
@@ -163,21 +165,33 @@ def scan_file_with_coverage(path: Path, root: Path | None = None) -> tuple[list[
             if normalized.analysis_text is not None and normalized.analysis_text != text:
                 record["normalization_applied"] = True
                 normalized_findings = _scan_decoded_text(
-                    normalized.analysis_text, path, relative + "#nfkc-unicode-normalized"
+                    normalized.analysis_text, path, relative
                 )
+                original_evidence = OriginalEvidence(normalized) if normalized_findings else None
                 for finding in normalized_findings:
-                    finding.evidence = text[:200]
+                    finding.location += NORMALIZED_SUFFIX
+                    finding.evidence = original_evidence.restore(finding.evidence)
                     finding.message += (
-                        " Detected in a Unicode-normalized analysis view; original file evidence is retained."
+                        " Detected in a Unicode-normalized analysis view."
+                        + (" Evidence is from the original file." if finding.evidence else
+                           " No unambiguous original evidence excerpt was available.")
                     )
+                raw_signals = {(f.rule_id, f.location, f.evidence) for f in findings}
+                raw_locations = {(f.rule_id, f.location) for f in findings}
+                new_signals = []
+                for finding in normalized_findings:
+                    key = (finding.rule_id, finding.location.removesuffix(NORMALIZED_SUFFIX))
+                    if key not in raw_locations or (finding.evidence and (*key, finding.evidence) not in raw_signals):
+                        new_signals.append(finding)
                 findings.extend(normalized_findings)
-                if normalized.obfuscation_transformed and normalized_findings:
+                if normalized.obfuscation_transformed and new_signals:
                     findings.append(Finding(
                         "T1-UNICODE-OBFUSCATION", 1,
                         "Unicode obfuscation in suspicious instruction",
                         "A suspicious instruction was detectable only after Unicode obfuscation normalization.",
                         0.9, server="repo", tool=path.name, source=relative,
-                        location="file", evidence=text[:200],
+                        location="file",
+                        evidence=next((item.evidence for item in new_signals if item.evidence), ""),
                     ))
                 record["detectors_applied"].append("unicode-normalized-review")
         else:

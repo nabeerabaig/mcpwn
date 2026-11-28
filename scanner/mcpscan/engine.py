@@ -5,7 +5,7 @@ from typing import Iterator, Any
 
 from . import tier1, tier2, tier3
 from .models import Finding, ToolDef
-from .normalize import normalize_text
+from .normalize import NORMALIZED_SUFFIX, OriginalEvidence, normalize_text
 
 MAX_CONTENT_DEPTH = 32
 MAX_CONTENT_NODES = 20000
@@ -123,31 +123,40 @@ def scan_tool_with_coverage(tool: ToolDef, sibling_names: set[str] | None = None
     normalized_fields = []
     suspicious_unicode = []
     for loc, text in texts:
-        findings.extend(tier1.scan_text(text, location=loc, **ctx))
-        findings.extend(tier2.scan_text(text, location=loc, sibling_tools=sibling_names, **ctx))
+        raw_findings = (tier1.scan_text(text, location=loc, **ctx)
+                        + tier2.scan_text(text, location=loc, sibling_tools=sibling_names, **ctx))
+        findings.extend(raw_findings)
         normalized = normalize_text(text)
         analysis_text = normalized.analysis_text
         if analysis_text is not None and analysis_text != text:
             normalized_fields.append(loc)
             normalized_findings = (
-                tier1.scan_text(analysis_text, location=loc + "#nfkc-unicode-normalized", **ctx)
-                + tier2.scan_text(analysis_text, location=loc + "#nfkc-unicode-normalized",
+                tier1.scan_text(analysis_text, location=loc + NORMALIZED_SUFFIX, **ctx)
+                + tier2.scan_text(analysis_text, location=loc + NORMALIZED_SUFFIX,
                                   sibling_tools=sibling_names, **ctx)
             )
+            original_evidence = OriginalEvidence(normalized) if normalized_findings else None
             for finding in normalized_findings:
-                finding.evidence = text[:200]
+                finding.evidence = original_evidence.restore(finding.evidence)
                 finding.message += (
-                    " Detected in a Unicode-normalized analysis view; evidence is preserved from the original source."
+                    " Detected in a Unicode-normalized analysis view."
+                    + (" Evidence is from the original source." if finding.evidence else
+                       " No unambiguous original evidence excerpt was available.")
                 )
             findings.extend(normalized_findings)
-            if normalized.obfuscation_transformed and normalized_findings:
+            raw_signals = {(f.rule_id, f.evidence) for f in raw_findings}
+            raw_rules = {f.rule_id for f in raw_findings}
+            new_signals = [f for f in normalized_findings if f.rule_id not in raw_rules
+                           or (f.evidence and (f.rule_id, f.evidence) not in raw_signals)]
+            if normalized.obfuscation_transformed and new_signals:
                 findings.append(Finding(
                     rule_id="T1-UNICODE-OBFUSCATION", tier=1,
                     title="Unicode obfuscation in suspicious instruction",
                     message=("A suspicious instruction was detectable only after removing invisible formatting "
                              "characters or normalizing lookalike Unicode characters."),
                     confidence=0.9, server=tool.server, tool=tool.name,
-                    location=loc, source=tool.source, evidence=text[:200],
+                    location=loc, source=tool.source,
+                    evidence=next((item.evidence for item in new_signals if item.evidence), ""),
                 ))
         if len(suspicious_unicode) < 200:
             for character in normalized.suspicious_characters:
@@ -247,8 +256,12 @@ def scan_tool(tool: ToolDef, sibling_names: set[str] | None = None, use_llm: boo
 def dedupe(findings: list[Finding]) -> list[Finding]:
     seen: dict[tuple, Finding] = {}
     for f in findings:
-        key = (f.rule_id, f.server, f.tool, f.location.split("#")[0], f.evidence[:60])
-        if key not in seen or f.confidence > seen[key].confidence:
+        key = (f.rule_id, f.source, f.server, f.tool,
+               f.location.removesuffix(NORMALIZED_SUFFIX) if f.evidence else f.location, f.evidence)
+        current = seen.get(key)
+        if (current is None or f.confidence > current.confidence
+                or (f.confidence == current.confidence and current.location.endswith(NORMALIZED_SUFFIX)
+                    and not f.location.endswith(NORMALIZED_SUFFIX))):
             seen[key] = f
     return list(seen.values())
 
